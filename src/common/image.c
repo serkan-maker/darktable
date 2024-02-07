@@ -339,6 +339,8 @@ void dt_image_film_roll(const dt_image_t *img,
 dt_imageio_write_xmp_t dt_image_get_xmp_mode()
 {
   dt_imageio_write_xmp_t res = DT_WRITE_XMP_NEVER;
+  if(darktable.gimp.mode) return res;
+
   const char *config = dt_conf_get_string_const("write_sidecar_files");
   if(config)
   {
@@ -2035,7 +2037,7 @@ dt_imgid_t dt_image_get_id(const uint32_t film_id, const gchar *filename)
   return id;
 }
 
-dt_imgid_t dt_image_import(const int32_t film_id,
+dt_imgid_t dt_image_import(const dt_filmid_t film_id,
                            const char *filename,
                            const gboolean override_ignore_nonraws,
                            const gboolean raise_signals)
@@ -2044,7 +2046,7 @@ dt_imgid_t dt_image_import(const int32_t film_id,
                                 TRUE, raise_signals);
 }
 
-dt_imgid_t dt_image_import_lua(const int32_t film_id,
+dt_imgid_t dt_image_import_lua(const dt_filmid_t film_id,
                                const char *filename,
                                const gboolean override_ignore_nonraws)
 {

@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    Copyright (C) 2009-2023 darktable developers.
+    Copyright (C) 2009-2024 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -872,7 +872,7 @@ static gboolean _osx_openfile_callback(GtkOSXApplication *OSXapp, gchar *path, g
 static gboolean _osx_openfile_callback(GtkosxApplication *OSXapp, gchar *path, gpointer user_data)
 #endif
 {
-  return dt_load_from_string(path, TRUE, NULL) > 0;
+  return dt_is_valid_imgid(dt_load_from_string(path, TRUE, NULL));
 }
 #endif
 
@@ -1369,7 +1369,6 @@ void dt_gui_gtk_run(dt_gui_gtk_t *gui)
     cairo_surface_destroy(darktable.gui->surface);
     darktable.gui->surface = NULL;
   }
-  dt_cleanup();
 }
 
 // refactored function to read current ppd, because gtk for osx has been unreliable
@@ -1406,7 +1405,7 @@ double dt_get_screen_resolution(GtkWidget *widget)
   else
   {
     screen_dpi = gdk_screen_get_resolution(gtk_widget_get_screen(widget));
-    if(screen_dpi < 0.0) 
+    if(screen_dpi < 0.0)
     {
       screen_dpi = 96.0;
       gdk_screen_set_resolution(gtk_widget_get_screen(widget), 96.0);
@@ -2731,7 +2730,7 @@ void dt_gui_show_help(GtkWidget *widget)
       // array of languages the usermanual supports.
       // NULL MUST remain the last element of the array
       const char *supported_languages[] =
-        { "en", "fr", "de", "eo", "es", "gl", "it", "pl", "pt-br", "uk", NULL };
+        { "en", "fr", "de", "eo", "es", "gl", "it", "nl", "pl", "pt-br", "uk", NULL };
       int lang_index = 0;
       gboolean is_language_supported = FALSE;
 
@@ -2829,8 +2828,9 @@ void dt_gui_load_theme(const char *theme)
     {
       // fallback to default theme
       g_free(path);
-      path = g_build_filename(datadir, "themes", "darktable.css", NULL);
-      dt_conf_set_string("ui_last/theme", "darktable");
+      // NOTE: When changing the default theme, don't forget to change it here!
+      path = g_build_filename(datadir, "themes", "darktable-elegant-grey.css", NULL);
+      dt_conf_set_string("ui_last/theme", "darktable-elegant-grey");
     }
     else
       dt_conf_set_string("ui_last/theme", theme);
