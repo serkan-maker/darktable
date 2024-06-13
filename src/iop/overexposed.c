@@ -131,8 +131,8 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
   const float *const upper_color = dt_iop_overexposed_colors[colorscheme][0];
   const float *const lower_color = dt_iop_overexposed_colors[colorscheme][1];
 
-  const float *const restrict in = __builtin_assume_aligned((const float *const restrict)ivoid, 64);
-  float *const restrict out = __builtin_assume_aligned((float *const restrict)ovoid, 64);
+  const float *const restrict in = DT_IS_ALIGNED((const float *const restrict)ivoid);
+  float *const restrict out = DT_IS_ALIGNED((float *const restrict)ovoid);
 
   const dt_iop_order_iccprofile_info_t *const current_profile = dt_ioppr_get_pipe_current_profile_info(self, piece->pipe);
   const dt_iop_order_iccprofile_info_t *const work_profile = dt_ioppr_get_histogram_profile_info(dev);
@@ -155,12 +155,7 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
   if(dev->overexposed.mode == DT_CLIPPING_PREVIEW_ANYRGB)
   {
     // Any of the RGB channels is out of bounds
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(ch, img_tmp, in, lower, lower_color, out, roi_out, \
-                      upper, upper_color) \
-  schedule(static)
-#endif
+    DT_OMP_FOR()
     for(size_t k = 0; k < (size_t)ch * roi_out->width * roi_out->height; k += ch)
     {
       if(img_tmp[k + 0] >= upper || img_tmp[k + 1] >= upper || img_tmp[k + 2] >= upper)
@@ -181,12 +176,7 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
   else if(dev->overexposed.mode == DT_CLIPPING_PREVIEW_GAMUT && work_profile)
   {
     // Gamut is out of bounds
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(ch, img_tmp, in, lower, lower_color, out, roi_out, \
-                      upper, upper_color, work_profile) \
-  schedule(static)
-#endif
+    DT_OMP_FOR()
     for(size_t k = 0; k < (size_t)ch * roi_out->width * roi_out->height; k += ch)
     {
       const float luminance = dt_ioppr_get_rgb_matrix_luminance(img_tmp + k,
@@ -239,12 +229,7 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
   else if(dev->overexposed.mode == DT_CLIPPING_PREVIEW_LUMINANCE && work_profile)
   {
     // Luminance channel is out of bounds
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(ch, img_tmp, in, lower, lower_color, out, roi_out, \
-                      upper, upper_color, work_profile) \
-  schedule(static)
-#endif
+    DT_OMP_FOR()
     for(size_t k = 0; k < (size_t)ch * roi_out->width * roi_out->height; k += ch)
     {
       const float luminance = dt_ioppr_get_rgb_matrix_luminance(img_tmp + k,
@@ -271,12 +256,7 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
   else if(dev->overexposed.mode == DT_CLIPPING_PREVIEW_SATURATION && work_profile)
   {
     // Show saturation out of bounds where luminance is valid
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(ch, img_tmp, in, lower, lower_color, out, roi_out, \
-                      upper, upper_color, work_profile) \
-  schedule(static)
-#endif
+    DT_OMP_FOR()
     for(size_t k = 0; k < (size_t)ch * roi_out->width * roi_out->height; k += ch)
     {
       const float luminance = dt_ioppr_get_rgb_matrix_luminance(img_tmp + k,

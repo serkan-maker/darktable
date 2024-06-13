@@ -664,7 +664,7 @@ void dt_styles_apply_to_list(const char *name, const GList *list, gboolean dupli
       dt_history_snapshot_undo_create(hist->imgid, &hist->before, &hist->before_history_end);
 
       dt_undo_disable_next(darktable.undo);
-      if(!duplicate) dt_history_delete_on_image_ext(imgid, FALSE);
+      if(!duplicate) dt_history_delete_on_image_ext(imgid, FALSE, TRUE);
     }
 
     dt_styles_apply_to_image(name, duplicate, is_overwrite, imgid);
@@ -703,17 +703,17 @@ void dt_multiple_styles_apply_to_list(GList *styles,
   if(dt_view_get_current() == DT_VIEW_DARKROOM)
     dt_dev_write_history(darktable.develop);
 
-  if(!styles && !list)
+  if(g_list_is_empty(styles) && g_list_is_empty(list))
   {
     dt_control_log(_("no images nor styles selected!"));
     return;
   }
-  else if(!styles)
+  else if(g_list_is_empty(styles))
   {
     dt_control_log(_("no styles selected!"));
     return;
   }
-  else if(!list)
+  else if(g_list_is_empty(list))
   {
     dt_control_log(_("no image selected!"));
     return;
@@ -728,7 +728,7 @@ void dt_multiple_styles_apply_to_list(GList *styles,
   {
     const dt_imgid_t imgid = GPOINTER_TO_INT(l->data);
     if(is_overwrite && !duplicate)
-      dt_history_delete_on_image_ext(imgid, FALSE);
+      dt_history_delete_on_image_ext(imgid, FALSE, TRUE);
 
     for(GList *style = styles; style; style = g_list_next(style))
     {
@@ -919,7 +919,7 @@ void _styles_apply_to_image_ext(const char *name,
       if(dt_is_valid_imgid(newimgid))
       {
         if(overwrite)
-          dt_history_delete_on_image_ext(newimgid, FALSE);
+          dt_history_delete_on_image_ext(newimgid, FALSE, TRUE);
         else
           dt_history_copy_and_paste_on_image(imgid, newimgid, FALSE, NULL, TRUE, TRUE);
       }
@@ -957,7 +957,7 @@ void _styles_apply_to_image_ext(const char *name,
       g_list_free_full(mi, g_free);
     }
 
-    dt_dev_read_history_ext(dev_dest, newimgid, TRUE, -1);
+    dt_dev_read_history_ext(dev_dest, newimgid, TRUE);
 
     dt_ioppr_check_iop_order(dev_dest, newimgid, "dt_styles_apply_to_image ");
 

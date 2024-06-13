@@ -29,9 +29,7 @@
 
 #define DEVELOP_BLEND_VERSION (13)
 
-#ifdef __cplusplus
-extern "C" {
-#endif /* __cplusplus */
+G_BEGIN_DECLS
 
 typedef enum dt_develop_blend_colorspace_t
 {
@@ -231,6 +229,7 @@ typedef struct dt_blendop_cl_global_t
   int kernel_blendop_mask_rgb_jzczhz;
   int kernel_blendop_Lab;
   int kernel_blendop_RAW;
+  int kernel_blendop_RAW4;
   int kernel_blendop_rgb_hsl;
   int kernel_blendop_rgb_jzczhz;
   int kernel_blendop_mask_tone_curve;
@@ -238,9 +237,9 @@ typedef struct dt_blendop_cl_global_t
   int kernel_blendop_display_channel;
   int kernel_calc_Y0_mask;
   int kernel_calc_scharr_mask;
-  int kernel_write_scharr_mask;
   int kernel_calc_blend;
   int kernel_mask_blur;
+  int kernel_blendop_highlights_mask;
 } dt_blendop_cl_global_t;
 
 
@@ -530,9 +529,9 @@ gboolean dt_develop_blend_process_cl(struct dt_iop_module_t *self,
                                      const struct dt_iop_roi_t *roi_out);
 #endif
 
-#ifdef __cplusplus
-} // extern "C"
-#endif /* __cplusplus */
+#define _BLEND_FUNC_PROTO(align, uni) DT_OMP_DECLARE_SIMD(aligned align uniform uni) static void
+
+G_END_DECLS
 
 // clang-format off
 // modelines: These editor modelines have been set for all relevant files by tools/update_modelines.py

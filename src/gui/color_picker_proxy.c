@@ -134,6 +134,32 @@ void dt_iop_color_picker_reset(dt_iop_module_t *module,
   }
 }
 
+static void _backtransform_box(const int num,
+                               const float *in,
+                               float *out)
+{
+  dt_develop_t *dev = darktable.develop;
+  const float wd = MAX(1, dev->preview_pipe->iwidth);
+  const float ht = MAX(1, dev->preview_pipe->iheight);
+  const float wdp = dev->preview_pipe->processed_width;
+  const float htp = dev->preview_pipe->processed_height;
+  const gboolean box = num == 2;
+
+  dt_boundingbox_t fbox = { wdp * in[0],
+                            htp * in[1],
+                            box ? wdp * in[2] : 0.0f,
+                            box ? htp * in[3] : 0.0f };
+  dt_dev_distort_backtransform(dev, fbox, num);
+
+  out[0] = CLIP(fbox[0] / wd);
+  out[1] = CLIP(fbox[1] / ht);
+  if(box)
+  {
+    out[2] = CLIP(fbox[2] / wd);
+    out[3] = CLIP(fbox[3] / ht);
+  }
+}
+
 static void _init_picker(dt_iop_color_picker_t *picker,
                          dt_iop_module_t *module,
                          const dt_iop_color_picker_flags_t flags,
@@ -142,19 +168,16 @@ static void _init_picker(dt_iop_color_picker_t *picker,
   // module is NULL if primary colorpicker
   picker->module     = module;
   picker->flags      = flags;
-  picker->picker_cst = module
-    ? module->default_colorspace(module, NULL, NULL)
-    : IOP_CS_NONE;
+  picker->picker_cst = module ? module->default_colorspace(module, NULL, NULL)
+                              : IOP_CS_NONE;
   picker->colorpick  = button;
   picker->changed    = FALSE;
+  picker->fixed_cst  = FALSE;
 
   // default values
-  const float middle = 0.5f;
-  const float area = 0.99f;
-  picker->pick_pos[0] = picker->pick_pos[1] = middle;
-  picker->pick_box[0] = picker->pick_box[1] = 1.0f - area;
-  picker->pick_box[2] = picker->pick_box[3] = area;
-
+  picker->pick_box[0] = picker->pick_box[1] = 0.0f;
+  picker->pick_box[2] = picker->pick_box[3] = 1.0f;
+  picker->pick_pos[0] = picker->pick_pos[1] = 0.0f;
   _color_picker_reset(picker);
 }
 
@@ -201,9 +224,24 @@ static gboolean _color_picker_callback_button_press(GtkWidget *button,
       kind = to_area_mode ? DT_COLOR_PICKER_AREA : DT_COLOR_PICKER_POINT;
     // pull picker's last recorded positions
     if(kind & DT_COLOR_PICKER_AREA)
+    {
+      if(   self->pick_box[0] == 0.0f && self->pick_box[1] == 0.0f
+         && self->pick_box[2] == 1.0f && self->pick_box[3] == 1.0f)
+      {
+        dt_boundingbox_t reset = { 0.02f, 0.02f, 0.98f, 0.98f };
+        _backtransform_box(2, reset, self->pick_box);
+      }
       dt_lib_colorpicker_set_box_area(darktable.lib, self->pick_box);
+    }
     else if(kind & DT_COLOR_PICKER_POINT)
+    {
+      if(self->pick_pos[0] == 0.0f && self->pick_pos[1] == 0.0f)
+      {
+        dt_boundingbox_t middle = { 0.5f, 0.5f };
+        _backtransform_box(1, middle, self->pick_pos);
+      }
       dt_lib_colorpicker_set_point(darktable.lib, self->pick_pos);
+    }
     else
       dt_unreachable_codepath();
 
@@ -266,7 +304,7 @@ void dt_iop_color_picker_set_cst(dt_iop_module_t *module,
   dt_iop_color_picker_t *const picker = darktable.lib->proxy.colorpicker.picker_proxy;
   // this is a bit hacky, because the code was built for when a module
   // "owned" an active pcicker
-  if(picker && picker->module == module && picker->picker_cst != picker_cst)
+  if(picker && picker->module == module && picker->picker_cst != picker_cst && !picker->fixed_cst)
   {
     picker->picker_cst = picker_cst;
     // force applying next picker data
@@ -304,8 +342,24 @@ static void _iop_color_picker_pickerdata_ready_callback(gpointer instance,
   if(_record_point_area(picker))
   {
     if(!module->blend_data || !blend_color_picker_apply(module, picker->colorpick, pipe))
+    {
       if(module->color_picker_apply)
+      {
+        dt_print_pipe(DT_DEBUG_PIPE | DT_DEBUG_PICKER,
+                      "color picker apply",
+                      pipe, module, DT_DEVICE_NONE, NULL, NULL,
+                      "%s%s.%s%s. point=%.3f - %.3f. area=%.3f - %.3f / %.3f - %.3f\n",
+                      picker->flags & DT_COLOR_PICKER_POINT ? " point" : "",
+                      picker->flags & DT_COLOR_PICKER_AREA  ? " area" : "",
+                      picker->flags & DT_COLOR_PICKER_DENOISE ? " denoise" : "",
+                      picker->flags & DT_COLOR_PICKER_IO ? " output" : "",
+                      picker->pick_pos[0], picker->pick_pos[1],
+                      picker->pick_box[0], picker->pick_box[1],
+                      picker->pick_box[2], picker->pick_box[3]);
+
         module->color_picker_apply(module, picker->colorpick, pipe);
+      }
+    }
   }
 }
 
@@ -325,6 +379,10 @@ static void _color_picker_proxy_preview_pipe_callback(gpointer instance,
   dt_lib_module_t *module = darktable.lib->proxy.colorpicker.module;
   if(module)
   {
+    dt_print_pipe(DT_DEBUG_PIPE | DT_DEBUG_PICKER | DT_DEBUG_VERBOSE,
+                  "picker update callback",
+                  NULL, NULL, DT_DEVICE_NONE, NULL, NULL, "\n");
+
     // pixelpipe may have run because sample area changed or an iop,
     // regardless we want to the colorpicker lib, which also can
     // provide swatch color for a point sample overlay
@@ -377,7 +435,10 @@ static GtkWidget *_color_picker_new(dt_iop_module_t *module,
     dt_gui_add_class(button, "dt_transparent_background");
     _init_picker(color_picker, module, flags, button);
     if(init_cst)
+    {
       color_picker->picker_cst = cst;
+      color_picker->fixed_cst = TRUE;
+    }
     g_signal_connect_data(G_OBJECT(button), "button-press-event",
                           G_CALLBACK(_color_picker_callback_button_press),
                           color_picker, (GClosureNotify)g_free, 0);
@@ -392,7 +453,10 @@ static GtkWidget *_color_picker_new(dt_iop_module_t *module,
     dt_bauhaus_widget_set_quad_tooltip(w, _("pick color from image"));
     _init_picker(color_picker, module, flags, w);
     if(init_cst)
+    {
       color_picker->picker_cst = cst;
+      color_picker->fixed_cst = TRUE;
+    }
     g_signal_connect_data(G_OBJECT(w), "quad-pressed",
                           G_CALLBACK(_color_picker_callback),
                           color_picker, (GClosureNotify)g_free, 0);

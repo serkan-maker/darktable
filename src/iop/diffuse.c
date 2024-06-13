@@ -1,6 +1,6 @@
 /*
    This file is part of darktable,
-   Copyright (C) 2021-2023 darktable developers.
+   Copyright (C) 2021-2024 darktable developers.
 
    darktable is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -108,9 +108,7 @@ typedef enum dt_isotropy_t
 } dt_isotropy_t;
 
 
-#ifdef _OPENMP
-#pragma omp declare simd
-#endif
+DT_OMP_DECLARE_SIMD()
 static inline dt_isotropy_t check_isotropy_mode(const float anisotropy)
 {
   // user param is negative, positive or zero. The sign encodes the direction of diffusion, the magnitude encodes the ratio of anisotropy
@@ -131,7 +129,7 @@ const char *name()
 
 const char *aliases()
 {
-  return _("diffusion|deconvolution|blur|sharpening");
+  return _("diffusion|deconvolution|blur|sharpening|bloom|clarity|dehaze|inpaint|watercolor");
 }
 
 const char **description(struct dt_iop_module_t *self)
@@ -337,6 +335,32 @@ void init_presets(dt_iop_module_so_t *self)
 
                                  .sharpness = 0.0f,
                                  .regularization = 2.5f,
+                                 .variance_threshold = 0.25f,
+
+                                 .threshold = 0.0f
+                               },
+
+                             sizeof(dt_iop_diffuse_params_t), 1,
+                             DEVELOP_BLEND_CS_RGB_SCENE);
+
+  dt_gui_presets_add_generic(_("dehaze: extra contrast"), self->op, self->version(),
+                             &(dt_iop_diffuse_params_t)
+                               { .iterations = 10,
+                                 .radius_center = 0,
+                                 .radius = 512,
+
+                                 .first = -0.20f,
+                                 .second = +0.10f,
+                                 .third = -0.20f,
+                                 .fourth = +0.10f,
+
+                                 .anisotropy_first = 2.f,
+                                 .anisotropy_second = 0.f,
+                                 .anisotropy_third = 2.f,
+                                 .anisotropy_fourth = 0.f,
+
+                                 .sharpness = 0.007f,
+                                 .regularization = 1.0f,
                                  .variance_threshold = 0.25f,
 
                                  .threshold = 0.0f
@@ -783,27 +807,12 @@ void tiling_callback(struct dt_iop_module_t *self,
   return;
 }
 
-static inline void init_reconstruct(float *const restrict reconstructed,
-                                    const size_t width,
-                                    const size_t height)
-{
-// init the reconstructed buffer with non-clipped and partially clipped pixels
-#ifdef _OPENMP
-#pragma omp parallel for simd default(none) dt_omp_firstprivate(reconstructed, width, height)                 \
-    schedule(simd:static) aligned(reconstructed:64)
-#endif
-  for(size_t k = 0; k < height * width * 4; k++) reconstructed[k] = 0.f;
-}
-
-
 // Discretization parameters for the Partial Derivative Equation solver
 #define H 1         // spatial step
 #define KAPPA 0.25f // 0.25 if h = 1, 1 if h = 2
 
 
-#ifdef _OPENMP
-#pragma omp declare simd aligned(pixels:64) aligned(xy:16) uniform(pixels)
-#endif
+DT_OMP_DECLARE_SIMD(aligned(pixels:64) aligned(xy:16) uniform(pixels))
 static inline void find_gradients(const dt_aligned_pixel_t pixels[9],
                                   dt_aligned_pixel_t xy[2])
 {
@@ -816,25 +825,7 @@ static inline void find_gradients(const dt_aligned_pixel_t pixels[9],
   }
 }
 
-#ifdef _OPENMP
-#pragma omp declare simd aligned(pixels:64) aligned(xy:16) uniform(pixels)
-#endif
-static inline void find_laplacians(const dt_aligned_pixel_t pixels[9],
-                                   dt_aligned_pixel_t xy[2])
-{
-  // Compute the laplacian with centered finite differences in a 3×3 stencil
-  // warning : x is vertical, y is horizontal
-  for_each_channel(c, aligned(xy) aligned(pixels:64))
-  {
-    xy[0][c] = (pixels[7][c] + pixels[1][c]) - 2.f * pixels[4][c];
-    xy[1][c] = (pixels[5][c] + pixels[3][c]) - 2.f * pixels[4][c];
-  }
-}
-
-
-#ifdef _OPENMP
-#pragma omp declare simd aligned(a, c2, cos_theta_sin_theta, cos_theta2, sin_theta2:16)
-#endif
+DT_OMP_DECLARE_SIMD(aligned(a, c2, cos_theta_sin_theta, cos_theta2, sin_theta2:16))
 static inline void rotation_matrix_isophote(const dt_aligned_pixel_t c2,
                                             const dt_aligned_pixel_t cos_theta_sin_theta,
                                             const dt_aligned_pixel_t cos_theta2,
@@ -854,9 +845,7 @@ static inline void rotation_matrix_isophote(const dt_aligned_pixel_t c2,
   }
 }
 
-#ifdef _OPENMP
-#pragma omp declare simd aligned(a, c2, cos_theta_sin_theta, cos_theta2, sin_theta2:16)
-#endif
+DT_OMP_DECLARE_SIMD(aligned(a, c2, cos_theta_sin_theta, cos_theta2, sin_theta2:16))
 static inline void rotation_matrix_gradient(const dt_aligned_pixel_t c2,
                                             const dt_aligned_pixel_t cos_theta_sin_theta,
                                             const dt_aligned_pixel_t cos_theta2,
@@ -877,9 +866,7 @@ static inline void rotation_matrix_gradient(const dt_aligned_pixel_t c2,
 }
 
 
-#ifdef _OPENMP
-#pragma omp declare simd aligned(a, kernel: 64)
-#endif
+DT_OMP_DECLARE_SIMD(aligned(a, kernel: 64))
 static inline void build_matrix(const dt_aligned_pixel_t a[2][2],
                                 dt_aligned_pixel_t kernel[9])
 {
@@ -911,9 +898,7 @@ static inline void build_matrix(const dt_aligned_pixel_t a[2][2],
   }
 }
 
-#ifdef _OPENMP
-#pragma omp declare simd aligned(kernel: 64)
-#endif
+DT_OMP_DECLARE_SIMD(aligned(kernel: 64))
 static inline void isotrope_laplacian(dt_aligned_pixel_t kernel[9])
 {
   // see in https://eng.aurelienpierre.com/2021/03/rotation-invariant-laplacian-for-2d-grids/#Second-order-isotropic-finite-differences
@@ -932,9 +917,7 @@ static inline void isotrope_laplacian(dt_aligned_pixel_t kernel[9])
   }
 }
 
-#ifdef _OPENMP
-#pragma omp declare simd aligned(kernel, c2: 64) uniform(isotropy_type)
-#endif
+DT_OMP_DECLARE_SIMD(aligned(kernel, c2: 64) uniform(isotropy_type))
 static inline void compute_kernel(const dt_aligned_pixel_t c2,
                                   const dt_aligned_pixel_t cos_theta_sin_theta,
                                   const dt_aligned_pixel_t cos_theta2,
@@ -972,7 +955,7 @@ static inline void compute_kernel(const dt_aligned_pixel_t c2,
 static inline void heat_PDE_diffusion(const float *const restrict high_freq,
                                       const float *const restrict low_freq,
                                       const uint8_t *const restrict mask,
-                                      const int has_mask,
+                                      const gboolean has_mask,
                                       float *const restrict output,
                                       const size_t width,
                                       const size_t height,
@@ -1005,12 +988,7 @@ static inline void heat_PDE_diffusion(const float *const restrict high_freq,
   const float *const restrict HF = DT_IS_ALIGNED(high_freq);
 
   const float regularization_factor = regularization * current_radius_square / 9.f;
-
-#ifdef _OPENMP
-#pragma omp parallel for default(none)                                                                            \
-    dt_omp_firstprivate(out, mask, HF, LF, height, width, ABCD, has_mask, variance_threshold, anisotropy,         \
-                        regularization_factor, mult, strength, isotropy_type) schedule(static)
-#endif
+  DT_OMP_FOR()
   for(size_t row = 0; row < height; ++row)
   {
     // interleave the order in which we process the rows so that we minimize cache misses
@@ -1175,7 +1153,7 @@ static inline float compute_anisotropy_factor(const float user_param)
   return sqf(user_param);
 }
 
-static inline gint wavelets_process(const float *const restrict in,
+static inline gboolean wavelets_process(const float *const restrict in,
                                     float *const restrict reconstructed,
                                     const uint8_t *const restrict mask,
                                     const size_t width,
@@ -1184,12 +1162,12 @@ static inline gint wavelets_process(const float *const restrict in,
                                     const float final_radius,
                                     const float zoom,
                                     const int scales,
-                                    const int has_mask,
+                                    const gboolean has_mask,
                                     float *const restrict HF[MAX_NUM_SCALES],
                                     float *const restrict LF_odd,
                                     float *const restrict LF_even)
 {
-  gint success = TRUE;
+  gboolean success = TRUE;
 
   const dt_aligned_pixel_t anisotropy
       = { compute_anisotropy_factor(data->anisotropy_first),
@@ -1323,10 +1301,7 @@ static inline void build_mask(const float *const restrict input,
                               const size_t width,
                               const size_t height)
 {
-#ifdef _OPENMP
-#pragma omp parallel for simd default(none) dt_omp_firstprivate(input, mask, height, width, threshold)        \
-    schedule(simd:static) aligned(mask, input : 64)
-#endif
+  DT_OMP_FOR_SIMD(aligned(mask, input : 64))
   for(size_t k = 0; k < height * width * 4; k += 4)
   {
     // TRUE if any channel is above threshold
@@ -1341,10 +1316,7 @@ static inline void inpaint_mask(float *const restrict inpainted,
                                 const size_t height)
 {
   // init the reconstruction with noise inside the masked areas
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(inpainted, original, mask, width, height) schedule(simd:static)
-#endif
+  DT_OMP_FOR()
   for(size_t k = 0; k < height * width * 4; k += 4)
   {
     if(mask[k / 4])
@@ -1405,47 +1377,38 @@ void process(dt_iop_module_t *self,
   float *restrict temp_in = NULL;
   float *restrict temp_out = NULL;
 
-  if(!mask ||
-     !dt_iop_alloc_image_buffers(self, roi_in, roi_out,
+  gboolean out_of_memory = !mask
+    || !dt_iop_alloc_image_buffers(self, roi_in, roi_out,
                                  4 | DT_IMGSZ_OUTPUT, &temp1,
                                  4 | DT_IMGSZ_OUTPUT, &temp2,
                                  4 | DT_IMGSZ_OUTPUT, &LF_odd,
                                  4 | DT_IMGSZ_OUTPUT, &LF_even,
-                                 0, NULL))
-  {
-    dt_print(DT_DEBUG_ALWAYS,"[diffuse] out of memory, skipping\n");
-    dt_iop_copy_image_roi(ovoid, ivoid, piece->colors, roi_in, roi_out);
-    return;
-  }
+                                 0, NULL); // if failing all pointers are NULL
+
   const float scale = fmaxf(piece->iscale / roi_in->scale, 1.f);
   const float final_radius = (data->radius + data->radius_center) * 2.f / scale;
 
   const int iterations = MAX(ceilf((float)data->iterations), 1);
-  const int diffusion_scales =
-    num_steps_to_reach_equivalent_sigma(B_SPLINE_SIGMA, final_radius);
+  const int diffusion_scales = num_steps_to_reach_equivalent_sigma(B_SPLINE_SIGMA, final_radius);
   const int scales = CLAMP(diffusion_scales, 1, MAX_NUM_SCALES);
-
-  gboolean out_of_memory = FALSE;
 
   // wavelets scales buffers
   float *restrict HF[MAX_NUM_SCALES];
   for(int s = 0; s < scales; s++)
   {
-    HF[s] = dt_alloc_align_float(width * height * 4);
+    HF[s] = out_of_memory ? NULL : dt_alloc_align_float(width * height * 4);
     if(!HF[s]) out_of_memory = TRUE;
   }
 
-  // PAUSE !
-  // check that all buffers exist before processing,
-  // because we use a lot of memory here.
-  if(!temp1 || !temp2 || !LF_odd || !LF_even || out_of_memory)
+  // check that all buffers exist before processing because we use a lot of memory here.
+  if(out_of_memory)
   {
+    dt_iop_copy_image_roi(ovoid, ivoid, piece->colors, roi_in, roi_out);
     dt_control_log(_("diffuse/sharpen failed to allocate memory, check your RAM settings"));
-    goto error;
+    goto finish;
   }
 
-  const int has_mask = (data->threshold > 0.f);
-
+  const gboolean has_mask = (data->threshold > 0.f);
   if(has_mask)
   {
     // build a boolean mask, TRUE where image is above threshold, FALSE otherwise
@@ -1475,7 +1438,7 @@ void process(dt_iop_module_t *self,
       temp_out = temp1;
     }
 
-    if(it == (int)iterations - 1)
+    if(it == iterations - 1)
       temp_out = out;
 
     wavelets_process(temp_in, temp_out, mask,
@@ -1483,13 +1446,14 @@ void process(dt_iop_module_t *self,
                      data, final_radius, scale, scales, has_mask, HF, LF_odd, LF_even);
   }
 
-error:
-  if(mask) dt_free_align(mask);
-  if(temp1) dt_free_align(temp1);
-  if(temp2) dt_free_align(temp2);
-  if(LF_even) dt_free_align(LF_even);
-  if(LF_odd) dt_free_align(LF_odd);
-  for(int s = 0; s < scales; s++) if(HF[s]) dt_free_align(HF[s]);
+finish:
+  dt_free_align(mask);
+  dt_free_align(temp1);
+  dt_free_align(temp2);
+  dt_free_align(LF_even);
+  dt_free_align(LF_odd);
+  for(int s = 0; s < scales; s++)
+    if(HF[s]) dt_free_align(HF[s]);
 }
 
 #if HAVE_OPENCL
@@ -1533,8 +1497,8 @@ static inline cl_int wavelets_process_cl(const int devid,
                   isotropy_type[0], isotropy_type[1], isotropy_type[2], isotropy_type[3]);
   */
 
-  float regularization = powf(10.f, data->regularization) - 1.f;
-  float variance_threshold = powf(10.f, data->variance_threshold);
+  const float regularization = powf(10.f, data->regularization) - 1.f;
+  const float variance_threshold = powf(10.f, data->variance_threshold);
 
 
   // À trous wavelet decompose
@@ -1661,7 +1625,7 @@ int process_cl(struct dt_iop_module_t *self,
   dt_iop_diffuse_global_data_t *const gd =
     (dt_iop_diffuse_global_data_t *)self->global_data;
 
-  int out_of_memory = FALSE;
+  gboolean out_of_memory = FALSE;
 
   cl_int err = DT_OPENCL_DEFAULT_ERROR;
 
@@ -1669,33 +1633,31 @@ int process_cl(struct dt_iop_module_t *self,
   const int width = roi_in->width;
   const int height = roi_in->height;
 
+  size_t origin[] = { 0, 0, 0 };
+  size_t region[] = { width, height, 1 };
+
   // allow fast mode, just copy input to output
   if(fastmode)
-  {
-    size_t origin[] = { 0, 0, 0 };
-    size_t region[] = { width, height, 1 };
-    err = dt_opencl_enqueue_copy_image(devid, dev_in, dev_out, origin, origin, region);
-    return err;
-  }
+    return dt_opencl_enqueue_copy_image(devid, dev_in, dev_out, origin, origin, region);
 
   size_t sizes[] = { ROUNDUPDWD(width, devid), ROUNDUPDHT(height, devid), 1 };
 
   cl_mem in = dev_in;
-
-  cl_mem temp1 = dt_opencl_alloc_device(devid, sizes[0], sizes[1], sizeof(float) * 4);
-  cl_mem temp2 = dt_opencl_alloc_device(devid, sizes[0], sizes[1], sizeof(float) * 4);
-
   cl_mem temp_in = NULL;
   cl_mem temp_out = NULL;
 
+  cl_mem temp1 = dt_opencl_alloc_device(devid, sizes[0], sizes[1], sizeof(float) * 4);
+  cl_mem temp2 = dt_opencl_alloc_device(devid, sizes[0], sizes[1], sizeof(float) * 4);
   cl_mem mask = dt_opencl_alloc_device(devid, sizes[0], sizes[1], sizeof(uint8_t));
+  // temp buffer for blurs. We will need to cycle between them for memory efficiency
+  cl_mem LF_even = dt_opencl_alloc_device(devid, sizes[0], sizes[1], sizeof(float) * 4);
+  cl_mem LF_odd = dt_opencl_alloc_device(devid, sizes[0], sizes[1], sizeof(float) * 4);
 
   const float scale = fmaxf(piece->iscale / roi_in->scale, 1.f);
   const float final_radius = (data->radius + data->radius_center) * 2.f / scale;
 
   const int iterations = MAX(ceilf((float)data->iterations), 1);
-  const int diffusion_scales =
-    num_steps_to_reach_equivalent_sigma(B_SPLINE_SIGMA, final_radius);
+  const int diffusion_scales = num_steps_to_reach_equivalent_sigma(B_SPLINE_SIGMA, final_radius);
   const int scales = CLAMP(diffusion_scales, 1, MAX_NUM_SCALES);
 
   // wavelets scales buffers
@@ -1706,22 +1668,16 @@ int process_cl(struct dt_iop_module_t *self,
     if(!HF[s]) out_of_memory = TRUE;
   }
 
-  // temp buffer for blurs. We will need to cycle between them for memory efficiency
-  cl_mem LF_even = dt_opencl_alloc_device(devid, sizes[0], sizes[1], sizeof(float) * 4);
-  cl_mem LF_odd = dt_opencl_alloc_device(devid, sizes[0], sizes[1], sizeof(float) * 4);
-
-  // PAUSE !
   // check that all buffers exist before processing,
   // because we use a lot of memory here.
-  if(!temp1 || !temp2 || !LF_odd || !LF_even || out_of_memory)
+  if(!temp1 || !temp2 || !LF_odd || !LF_even || !mask || out_of_memory)
   {
-    dt_control_log(_("diffuse/sharpen failed to allocate memory, check your RAM settings"));
+    dt_opencl_enqueue_copy_image(devid, dev_in, dev_out, origin, origin, region);
     err = CL_MEM_OBJECT_ALLOCATION_FAILURE;
     goto error;
   }
 
-  const int has_mask = (data->threshold > 0.f);
-
+  const gboolean has_mask = (data->threshold > 0.f);
   if(has_mask)
   {
     // build a boolean mask, TRUE where image is above threshold, FALSE otherwise
@@ -1759,7 +1715,8 @@ int process_cl(struct dt_iop_module_t *self,
       temp_out = temp1;
     }
 
-    if(it == (int)iterations - 1) temp_out = dev_out;
+    if(it == iterations - 1)
+      temp_out = dev_out;
     err = wavelets_process_cl(devid, temp_in, temp_out, mask, sizes,
                               width, height, data, gd, final_radius,
                               scale, scales, has_mask, HF, LF_odd, LF_even);
@@ -1832,7 +1789,7 @@ void gui_init(struct dt_iop_module_t *self)
 
   g->radius_center = dt_bauhaus_slider_from_params(self, "radius_center");
   dt_bauhaus_slider_set_soft_range(g->radius_center, 0., 512.);
-  dt_bauhaus_slider_set_format(g->radius_center, " px");
+  dt_bauhaus_slider_set_format(g->radius_center, _(" px"));
   gtk_widget_set_tooltip_text(
       g->radius_center, _("main scale of the diffusion.\n"
                           "zero makes diffusion act on the finest details more heavily.\n"
@@ -1842,7 +1799,7 @@ void gui_init(struct dt_iop_module_t *self)
 
   g->radius = dt_bauhaus_slider_from_params(self, "radius");
   dt_bauhaus_slider_set_soft_range(g->radius, 1., 512.);
-  dt_bauhaus_slider_set_format(g->radius, " px");
+  dt_bauhaus_slider_set_format(g->radius, _(" px"));
   gtk_widget_set_tooltip_text(
       g->radius, _("width of the diffusion around the central radius.\n"
                    "high values diffuse on a large band of radii.\n"
@@ -1938,6 +1895,8 @@ void gui_init(struct dt_iop_module_t *self)
                      FALSE, FALSE, 0);
 
   g->sharpness = dt_bauhaus_slider_from_params(self, "sharpness");
+  dt_bauhaus_slider_set_digits(g->sharpness, 3);
+  dt_bauhaus_slider_set_soft_range(g->sharpness, -0.25, 0.25);
   dt_bauhaus_slider_set_format(g->sharpness, "%");
   gtk_widget_set_tooltip_text
     (g->sharpness,

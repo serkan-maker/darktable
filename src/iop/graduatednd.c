@@ -587,6 +587,7 @@ int mouse_moved(dt_iop_module_t *self,
                 const float zoom_scale)
 {
   dt_iop_graduatednd_gui_data_t *g = (dt_iop_graduatednd_gui_data_t *)self->gui_data;
+  gboolean handled = FALSE;
 
   // are we dragging something ?
   if(g->dragging > 0)
@@ -613,6 +614,7 @@ int mouse_moved(dt_iop_module_t *self,
       g->oldx = pzx;
       g->oldy = pzy;
     }
+    handled = TRUE;
   }
   else
   {
@@ -632,7 +634,7 @@ int mouse_moved(dt_iop_module_t *self,
   }
 
   dt_control_queue_redraw_center();
-  return 1;
+  return handled;
 }
 
 int button_pressed(dt_iop_module_t *self,
@@ -745,17 +747,13 @@ int scrolled(
   return 0;
 }
 
-#ifdef _OPENMP
-#pragma omp declare simd simdlen(4)
-#endif
+DT_OMP_DECLARE_SIMD(simdlen(4))
 static inline float _density_times_length(const float dens, const float length)
 {
   return (dens * CLAMP(0.5f + length, 0.0f, 1.0f) / 8.0f);
 }
 
-#ifdef _OPENMP
-#pragma omp declare simd simdlen(4)
-#endif
+DT_OMP_DECLARE_SIMD(simdlen(4))
 static inline float _compute_density(const float dens, const float length)
 {
 #if 1
@@ -823,13 +821,7 @@ void process(struct dt_iop_module_t *self,
 
   if(density > 0)
   {
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-    dt_omp_firstprivate(density, color, color1, zero, filter_hardness, cosv_hh_inv, \
-                        ivoid, ix, iy, offset, ovoid, height, width, sinv, length_inc, \
-                        length_base)  \
-    schedule(static)
-#endif
+    DT_OMP_FOR()
     for(int y = 0; y < height; y++)
     {
       const size_t k = (size_t)4 * width * y;
@@ -881,12 +873,7 @@ void process(struct dt_iop_module_t *self,
   }
   else
   {
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-    dt_omp_firstprivate(density, color, color1, zero, filter_hardness, cosv_hh_inv,    \
-                        ivoid, ix, iy, offset, ovoid, height, width, sinv, length_inc, length_base) \
-    schedule(static)
-#endif
+    DT_OMP_FOR()
     for(int y = 0; y < height; y++)
     {
       const size_t k = (size_t)4 * width * y;

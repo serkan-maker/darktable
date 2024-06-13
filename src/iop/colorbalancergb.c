@@ -558,9 +558,7 @@ void init_presets(dt_iop_module_so_t *self)
 
 
 
-#ifdef _OPENMP
-#pragma omp declare simd aligned(output, output_comp: 16) uniform(shadows_weight, midtones_weight, highlights_weight)
-#endif
+DT_OMP_DECLARE_SIMD(aligned(output, output_comp: 16) uniform(shadows_weight, midtones_weight, highlights_weight))
 static inline void opacity_masks(const float x,
                                  const float shadows_weight, const float highlights_weight,
                                  const float midtones_weight, const float mask_grey_fulcrum,
@@ -679,18 +677,18 @@ void process(struct dt_iop_module_t *self,
   dt_colormatrix_t output_matrix_trans;
   dt_colormatrix_transpose(output_matrix_trans, output_matrix);
 
-  const float *const restrict in = __builtin_assume_aligned(((const float *const restrict)ivoid), 64);
-  float *const restrict out = __builtin_assume_aligned(((float *const restrict)ovoid), 64);
-  const float *const restrict gamut_LUT = __builtin_assume_aligned(((const float *const restrict)d->gamut_LUT), 64);
+  const float *const restrict in = DT_IS_ALIGNED(((const float *const restrict)ivoid));
+  float *const restrict out = DT_IS_ALIGNED(((float *const restrict)ovoid));
+  const float *const restrict gamut_LUT = DT_IS_ALIGNED(((const float *const restrict)d->gamut_LUT));
 
-  const float *const restrict global = __builtin_assume_aligned((const float *const restrict)d->global, 16);
-  const float *const restrict highlights = __builtin_assume_aligned((const float *const restrict)d->highlights, 16);
-  const float *const restrict shadows = __builtin_assume_aligned((const float *const restrict)d->shadows, 16);
-  const float *const restrict midtones = __builtin_assume_aligned((const float *const restrict)d->midtones, 16);
+  const float *const restrict global = DT_IS_ALIGNED_PIXEL((const float *const restrict)d->global);
+  const float *const restrict highlights = DT_IS_ALIGNED_PIXEL((const float *const restrict)d->highlights);
+  const float *const restrict shadows = DT_IS_ALIGNED_PIXEL((const float *const restrict)d->shadows);
+  const float *const restrict midtones = DT_IS_ALIGNED_PIXEL((const float *const restrict)d->midtones);
 
-  const float *const restrict chroma = __builtin_assume_aligned((const float *const restrict)d->chroma, 16);
-  const float *const restrict saturation = __builtin_assume_aligned((const float *const restrict)d->saturation, 16);
-  const float *const restrict brilliance = __builtin_assume_aligned((const float *const restrict)d->brilliance, 16);
+  const float *const restrict chroma = DT_IS_ALIGNED_PIXEL((const float *const restrict)d->chroma);
+  const float *const restrict saturation = DT_IS_ALIGNED_PIXEL((const float *const restrict)d->saturation);
+  const float *const restrict brilliance = DT_IS_ALIGNED_PIXEL((const float *const restrict)d->brilliance);
 
   const gint mask_display
       = ((piece->pipe->type & DT_DEV_PIXELPIPE_FULL) && self->dev->gui_attached
@@ -710,15 +708,7 @@ void process(struct dt_iop_module_t *self,
   const size_t npixels = (size_t)roi_out->height * roi_out->width;
   const size_t out_width = roi_out->width;
 
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(in, out, npixels, out_width, d, g, mask_display, \
-                      input_matrix_trans, output_matrix_trans, gamut_LUT,     \
-                      global, highlights, shadows, midtones, chroma, \
-                      saturation, brilliance, checker_1, checker_2, L_white, \
-                      hue_rotation_matrix)                              \
-  schedule(static)
-#endif
+  DT_OMP_FOR()
   for(size_t k  = 0; k < 4 * npixels; k += 4)
   {
     // clip pipeline RGB
@@ -1267,12 +1257,7 @@ void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *p1, dt_dev_pix
     // make RGB values vary between [0; 1] in working space, convert to Ych and get the max(c(h)))
     if(p->saturation_formula == DT_COLORBALANCE_SATURATION_JZAZBZ)
     {
-      #ifdef _OPENMP
-      #pragma omp parallel for default(none) \
-            dt_omp_firstprivate(input_matrix, p) schedule(static) \
-            reduction(max : LUT_saturation[:LUT_ELEM]) \
-            collapse(3)
-      #endif
+      DT_OMP_FOR(reduction(max : LUT_saturation[:LUT_ELEM]) collapse(3))
       for(size_t r = 0; r < STEPS; r++)
         for(size_t g = 0; g < STEPS; g++)
           for(size_t b = 0; b < STEPS; b++)
@@ -1325,13 +1310,7 @@ void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *p1, dt_dev_pix
       const float h_blue  = atan2f(xyY_blue[1] - D65_xyY[1], xyY_blue[0] - D65_xyY[0]);
 
       // March the gamut boundary in CIE xyY 1931 by angular steps of 0.02°
-      #ifdef _OPENMP
-        #pragma omp parallel for default(none) \
-              dt_omp_firstprivate(input_matrix, xyY_red, xyY_green, xyY_blue, h_red, h_green, h_blue, D65_xyY) \
-              reduction(max : LUT_saturation[:LUT_ELEM]) \
-              schedule(static)
-      #endif
-
+      DT_OMP_FOR(reduction(max : LUT_saturation[:LUT_ELEM]))
       for(int i = 0; i < 50 * 360; i++)
       {
         const float angle = -M_PI_F + ((float)i) / (50.f * 360.f) * 2.f * M_PI_F;
@@ -1663,11 +1642,7 @@ static gboolean dt_iop_tonecurve_draw(GtkWidget *widget, cairo_t *crf, gpointer 
   const size_t checker_1 = DT_PIXEL_APPLY_DPI(6);
   const size_t checker_2 = 2 * checker_1;
 
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(data, graph_height, line_height, checker_1, checker_2) \
-  schedule(static) collapse(2)
-#endif
+  DT_OMP_FOR(collapse(2))
   for(size_t i = 0; i < (size_t)graph_height; i++)
     for(size_t j = 0; j < (size_t)line_height; j++)
     {
@@ -1711,11 +1686,7 @@ static gboolean dt_iop_tonecurve_draw(GtkWidget *widget, cairo_t *crf, gpointer 
   float *LUT[3];
   for(size_t c = 0; c < 3; c++) LUT[c] = dt_alloc_align_float(LUT_ELEM);
 
-#ifdef _OPENMP
-#pragma omp parallel for simd default(none) \
-  dt_omp_firstprivate(LUT, shadows_weight, midtones_weight, highlights_weight, mask_grey_fulcrum) \
-  schedule(static)
-#endif
+  DT_OMP_FOR()
   for(size_t k = 0 ; k < LUT_ELEM; k++)
   {
     const float Y = k / (float)(LUT_ELEM - 1);
@@ -2124,7 +2095,9 @@ void gui_init(dt_iop_module_t *self)
 
   gtk_box_pack_start(GTK_BOX(self->widget), dt_ui_section_label_new(C_("section", "luminance ranges")), FALSE, FALSE, 0);
 
-  g->area = GTK_DRAWING_AREA(dt_ui_resize_wrap(NULL, 0, "plugins/darkroom/colorbalancergb/aspect_percent"));
+  g->area = GTK_DRAWING_AREA(dt_ui_resize_wrap(NULL,
+                                               0,
+                                               "plugins/darkroom/colorbalancergb/graphheight"));
   g_object_set_data(G_OBJECT(g->area), "iop-instance", self);
   dt_action_define_iop(self, NULL, N_("graph"), GTK_WIDGET(g->area), NULL);
   g_signal_connect(G_OBJECT(g->area), "draw", G_CALLBACK(dt_iop_tonecurve_draw), self);
@@ -2188,7 +2161,7 @@ void gui_init(dt_iop_module_t *self)
   gtk_box_pack_start(GTK_BOX(self->widget), GTK_WIDGET(row2), FALSE, FALSE, 0);
 
   g->checker_size = dt_bauhaus_slider_new_with_range(self, 2., 32., 0, 8., 0);
-  dt_bauhaus_slider_set_format(g->checker_size, " px");
+  dt_bauhaus_slider_set_format(g->checker_size, _(" px"));
   dt_bauhaus_widget_set_label(g->checker_size,  NULL, _("checkerboard size"));
   g_signal_connect(G_OBJECT(g->checker_size), "value-changed", G_CALLBACK(checker_size_callback), self);
   gtk_box_pack_start(GTK_BOX(self->widget), GTK_WIDGET(g->checker_size), FALSE, FALSE, 0);

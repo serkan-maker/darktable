@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    Copyright (C) 2022-2023 darktable developers.
+    Copyright (C) 2024 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -214,17 +214,15 @@ typedef struct _filter_t
 
 // filters definitions
 #include "libs/filters/aperture.c"
-#include "libs/filters/camera.c"
 #include "libs/filters/colors.c"
 #include "libs/filters/date.c"
 #include "libs/filters/exposure.c"
 #include "libs/filters/filename.c"
 #include "libs/filters/focal.c"
-#include "libs/filters/grouping.c"
 #include "libs/filters/history.c"
 #include "libs/filters/iso.c"
-#include "libs/filters/lens.c"
 #include "libs/filters/local_copy.c"
+#include "libs/filters/misc.c"
 #include "libs/filters/module_order.c"
 #include "libs/filters/rating.c"
 #include "libs/filters/rating_range.c"
@@ -246,13 +244,17 @@ static _filter_t filters[]
         { DT_COLLECTION_PROP_FOCAL_LENGTH, _focal_widget_init, _focal_update },
         { DT_COLLECTION_PROP_ISO, _iso_widget_init, _iso_update },
         { DT_COLLECTION_PROP_EXPOSURE, _exposure_widget_init, _exposure_update },
-        { DT_COLLECTION_PROP_GROUPING, _grouping_widget_init, _grouping_update },
+        { DT_COLLECTION_PROP_GROUP_ID, _misc_widget_init, _misc_update },
         { DT_COLLECTION_PROP_LOCAL_COPY, _local_copy_widget_init, _local_copy_update },
         { DT_COLLECTION_PROP_HISTORY, _history_widget_init, _history_update },
         { DT_COLLECTION_PROP_ORDER, _module_order_widget_init, _module_order_update },
         { DT_COLLECTION_PROP_RATING, _rating_widget_init, _rating_update },
-        { DT_COLLECTION_PROP_LENS, _lens_widget_init, _lens_update },
-        { DT_COLLECTION_PROP_CAMERA, _camera_widget_init, _camera_update } };
+        { DT_COLLECTION_PROP_LENS, _misc_widget_init, _misc_update },
+        { DT_COLLECTION_PROP_CAMERA, _misc_widget_init, _misc_update },
+        { DT_COLLECTION_PROP_WHITEBALANCE, _misc_widget_init, _misc_update },
+        { DT_COLLECTION_PROP_FLASH, _misc_widget_init, _misc_update },
+        { DT_COLLECTION_PROP_EXPOSURE_PROGRAM, _misc_widget_init, _misc_update },
+        { DT_COLLECTION_PROP_METERING_MODE, _misc_widget_init, _misc_update } };
 
 static _filter_t *_filters_get(const dt_collection_properties_t prop)
 {
@@ -922,9 +924,13 @@ static gboolean _rule_show_popup(GtkWidget *widget, dt_lib_filtering_rule_t *rul
   ADD_COLLECT_ENTRY(spop, DT_COLLECTION_PROP_FOCAL_LENGTH);
   ADD_COLLECT_ENTRY(spop, DT_COLLECTION_PROP_ISO);
   ADD_COLLECT_ENTRY(spop, DT_COLLECTION_PROP_ASPECT_RATIO);
+  ADD_COLLECT_ENTRY(spop, DT_COLLECTION_PROP_WHITEBALANCE);
+  ADD_COLLECT_ENTRY(spop, DT_COLLECTION_PROP_FLASH);
+  ADD_COLLECT_ENTRY(spop, DT_COLLECTION_PROP_EXPOSURE_PROGRAM);
+  ADD_COLLECT_ENTRY(spop, DT_COLLECTION_PROP_METERING_MODE);
 
   _popup_add_item(spop, _("darktable"), 0, TRUE, NULL, NULL, self, 0.0);
-  ADD_COLLECT_ENTRY(spop, DT_COLLECTION_PROP_GROUPING);
+  ADD_COLLECT_ENTRY(spop, DT_COLLECTION_PROP_GROUP_ID);
   ADD_COLLECT_ENTRY(spop, DT_COLLECTION_PROP_LOCAL_COPY);
   ADD_COLLECT_ENTRY(spop, DT_COLLECTION_PROP_HISTORY);
   ADD_COLLECT_ENTRY(spop, DT_COLLECTION_PROP_MODULE);
@@ -989,9 +995,13 @@ static void _populate_rules_combo(GtkWidget *w)
   ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_FOCAL_LENGTH);
   ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_ISO);
   ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_ASPECT_RATIO);
+  ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_WHITEBALANCE);
+  ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_FLASH);
+  ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_EXPOSURE_PROGRAM);
+  ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_METERING_MODE);
 
   dt_bauhaus_combobox_add_section(w, _("darktable"));
-  ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_GROUPING);
+  ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_GROUP_ID);
   ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_LOCAL_COPY);
   ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_HISTORY);
   ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_MODULE);
@@ -1658,12 +1668,16 @@ static void _topbar_populate_rules_combo(GtkWidget *w, dt_lib_filtering_t *d)
   ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_FOCAL_LENGTH);
   ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_ISO);
   ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_ASPECT_RATIO);
+  ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_WHITEBALANCE);
+  ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_FLASH);
+  ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_EXPOSURE_PROGRAM);
+  ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_METERING_MODE);
   // if we have not added any entry, remove the section
   if(nb == dt_bauhaus_combobox_length(w)) dt_bauhaus_combobox_remove_at(w, nb - 1);
 
   dt_bauhaus_combobox_add_section(w, _("darktable"));
   nb = dt_bauhaus_combobox_length(w);
-  ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_GROUPING);
+  ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_GROUP_ID);
   ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_LOCAL_COPY);
   ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_HISTORY);
   ADD_COLLECT_ENTRY(DT_COLLECTION_PROP_MODULE);

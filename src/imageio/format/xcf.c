@@ -148,8 +148,13 @@ int write_image(dt_imageio_module_data_t *data, const char *filename, const void
     size_t xmp_len;
     if(xmp_string && (xmp_len = strlen(xmp_string)) > 0)
     {
-      xcf_set(xcf, XCF_PROP, XCF_PROP_PARASITES, "gimp-metadata", XCF_PARASITE_PERSISTENT, xmp_len, xmp_string);
+      // Prepend the expected "GIMP_XMP_1"
+      const char *GIMP_XMP_PREFIX = "GIMP_XMP_1";
+      char *xmp_buf = g_strjoin(NULL, GIMP_XMP_PREFIX, xmp_string, NULL);
+      xcf_set(xcf, XCF_PROP, XCF_PROP_PARASITES, "gimp-metadata", XCF_PARASITE_PERSISTENT,
+              xmp_len + strlen(GIMP_XMP_PREFIX), xmp_buf);
       g_free(xmp_string);
+      g_free(xmp_buf);
     }
   }
 
@@ -192,11 +197,7 @@ int write_image(dt_imageio_module_data_t *data, const char *filename, const void
         {
           channel_data = malloc(sizeof(uint8_t) * d->global.width * d->global.height);
           uint8_t *ch = (uint8_t *)channel_data;
-#ifdef _OPENMP
-#pragma omp parallel for simd default(none) \
-  dt_omp_firstprivate(ch, d, raster_mask) \
-  schedule(simd:static)
-#endif
+          DT_OMP_FOR_SIMD()
           for(size_t i = 0; i < (size_t)d->global.width * d->global.height; ++i)
             ch[i] = (uint8_t)roundf(CLIP(raster_mask[i]) * 255.0f);
         }
@@ -204,11 +205,7 @@ int write_image(dt_imageio_module_data_t *data, const char *filename, const void
         {
           channel_data = malloc(sizeof(uint16_t) * d->global.width * d->global.height);
           uint16_t *ch = (uint16_t *)channel_data;
-#ifdef _OPENMP
-#pragma omp parallel for simd default(none) \
-  dt_omp_firstprivate(ch, d, raster_mask) \
-  schedule(simd:static)
-#endif
+          DT_OMP_FOR_SIMD()
           for(size_t i = 0; i < (size_t)d->global.width * d->global.height; ++i)
             ch[i] = (uint16_t)roundf(CLIP(raster_mask[i]) * 65535.0f);
         }

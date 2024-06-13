@@ -208,7 +208,10 @@ dt_imageio_retval_t dt_imageio_open_rawspeed(dt_image_t *img,
     img->raw_black_level = r->blackLevel;
     img->raw_white_point = r->whitePoint.value_or((1U << 16)-1);
 
-    if(!r->blackAreas.empty() || !r->blackLevelSeparate)
+    // NOTE: while it makes sense to always sample black areas when they exist,
+    // black area handling is broken in rawspeed, so don't do that for now.
+    // https://github.com/darktable-org/rawspeed/issues/389
+    if(!r->blackLevelSeparate)
     {
       r->calculateBlackAreas();
     }
@@ -466,9 +469,7 @@ dt_imageio_retval_t dt_imageio_open_rawspeed_sraw(dt_image_t *img,
 
     if(r->getDataType() == TYPE_USHORT16)
     {
-#ifdef _OPENMP
-#pragma omp parallel for default(none) schedule(static) dt_omp_firstprivate(cpp) shared(r, img, buf)
-#endif
+      DT_OMP_PRAGMA(parallel for schedule(static) shared(r, img, buf) firstprivate(cpp))
       for(int j = 0; j < img->height; j++)
       {
         const Array2DRef<uint16_t> in = r->getU16DataAsUncroppedArray2DRef();
@@ -483,9 +484,7 @@ dt_imageio_retval_t dt_imageio_open_rawspeed_sraw(dt_image_t *img,
     }
     else // r->getDataType() == TYPE_FLOAT32
     {
-#ifdef _OPENMP
-#pragma omp parallel for default(none) schedule(static) dt_omp_firstprivate(cpp) shared(r, img, buf)
-#endif
+      DT_OMP_PRAGMA(parallel for schedule(static) shared(r, img, buf) firstprivate(cpp))
       for(int j = 0; j < img->height; j++)
       {
         const Array2DRef<float> in = r->getF32DataAsUncroppedArray2DRef();
@@ -508,9 +507,7 @@ dt_imageio_retval_t dt_imageio_open_rawspeed_sraw(dt_image_t *img,
 
     if(r->getDataType() == TYPE_USHORT16)
     {
-#ifdef _OPENMP
-#pragma omp parallel for default(none) schedule(static) dt_omp_firstprivate(cpp) shared(r, img, buf)
-#endif
+      DT_OMP_PRAGMA(parallel for schedule(static) shared(r, img, buf) firstprivate(cpp))
       for(int j = 0; j < img->height; j++)
       {
         const Array2DRef<uint16_t> in = r->getU16DataAsUncroppedArray2DRef();
@@ -526,9 +523,7 @@ dt_imageio_retval_t dt_imageio_open_rawspeed_sraw(dt_image_t *img,
     }
     else // r->getDataType() == TYPE_FLOAT32
     {
-#ifdef _OPENMP
-#pragma omp parallel for default(none) schedule(static) dt_omp_firstprivate(cpp) shared(r, img, buf)
-#endif
+      DT_OMP_PRAGMA(parallel for schedule(static) shared(r, img, buf) firstprivate(cpp))
       for(int j = 0; j < img->height; j++)
       {
         const Array2DRef<float> in = r->getF32DataAsUncroppedArray2DRef();

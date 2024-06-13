@@ -646,15 +646,19 @@ static gboolean _event_image_draw(GtkWidget *widget,
       // better use the preview buffer for surface, in order to stay in sync
       dt_thumbnail_surface_destroy(thumb);
 
+      // make sure we use all backbuf data here with local copies in a protected state
+      // to protect against darkroom image switching to next/previous for example.
+      dt_pthread_mutex_t *mutex = &dev->preview_pipe->backbuf_mutex;
+      dt_pthread_mutex_lock(mutex);
+
       // get new surface with preview image
       const int buf_width = dev->preview_pipe->backbuf_width;
       const int buf_height = dev->preview_pipe->backbuf_height;
-      uint8_t *rgbbuf = g_malloc0(sizeof(unsigned char) * 4 * buf_width * buf_height);
 
-      dt_pthread_mutex_t *mutex = &dev->preview_pipe->backbuf_mutex;
-      dt_pthread_mutex_lock(mutex);
-      memcpy(rgbbuf, dev->preview_pipe->backbuf,
-             sizeof(unsigned char) * 4 * buf_width * buf_height);
+      const size_t bbufsize = sizeof(uint8_t) * 4 * buf_width * buf_height;
+      uint8_t *rgbbuf = dt_alloc_align_uint8(bbufsize);
+
+      memcpy(rgbbuf, dev->preview_pipe->backbuf, bbufsize);
       dt_pthread_mutex_unlock(mutex);
 
       const int stride = cairo_format_stride_for_width(CAIRO_FORMAT_RGB24, buf_width);
@@ -696,12 +700,10 @@ static gboolean _event_image_draw(GtkWidget *widget,
                           cairo_image_surface_get_data(thumb->img_surf));
           cairo_restore(cr2);
         }
-
         cairo_surface_destroy(tmp_surface);
         cairo_destroy(cr2);
       }
-      if(rgbbuf) g_free(rgbbuf);
-
+      dt_free_align(rgbbuf);
       thumb->img_surf_preview = TRUE;
     }
     else
@@ -968,7 +970,8 @@ static gboolean _event_main_release(GtkWidget *widget,
       dt_selection_select_single(darktable.selection, thumb->imgid);
     else if(dt_modifier_is(event->state, GDK_MOD1_MASK))
       dt_selection_select_single(darktable.selection, thumb->imgid);
-    else if(dt_modifier_is(event->state, GDK_CONTROL_MASK))
+    else if(dt_modifier_is(event->state, GDK_CONTROL_MASK)
+            || dt_modifier_is(event->state, GDK_MOD2_MASK)) // CMD key on macOS
       dt_selection_toggle(darktable.selection, thumb->imgid);
     else if(dt_modifier_is(event->state, GDK_SHIFT_MASK))
       dt_selection_select_range(darktable.selection, thumb->imgid);
@@ -1063,7 +1066,8 @@ static gboolean _event_grouping_release(GtkWidget *widget,
     else // expand the group
       darktable.gui->expanded_group_id = thumb->groupid;
     dt_collection_update_query(darktable.collection,
-                               DT_COLLECTION_CHANGE_RELOAD, DT_COLLECTION_PROP_GROUPING,
+                               DT_COLLECTION_CHANGE_RELOAD,
+                               DT_COLLECTION_PROP_UNDEF,
                                NULL);
   }
   return FALSE;

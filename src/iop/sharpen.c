@@ -107,8 +107,8 @@ void init_presets(dt_iop_module_so_t *self)
                              self->version(), &tmp, sizeof(dt_iop_sharpen_params_t),
                              1, DEVELOP_BLEND_CS_RGB_DISPLAY);
   // restrict to raw images
-  dt_gui_presets_update_ldr(_("sharpen"), self->op,
-                            self->version(), FOR_RAW);
+  dt_gui_presets_update_format(_("sharpen"), self->op,
+                               self->version(), FOR_RAW);
 }
 
 static float *const init_gaussian_kernel(const int rad, const size_t mat_size, const float sigma2)
@@ -303,11 +303,7 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
   }
   const float *const restrict in = (float*)ivoid;
   const size_t width = roi_out->width;
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(in, ovoid, mat, rad, width, roi_in, roi_out, tmp, padded_size, data) \
-  schedule(static)
-#endif
+  DT_OMP_FOR()
   for(int j = 0; j < roi_out->height; j++)
   {
     // We skip the top and bottom 'rad' rows because the kernel would extend beyond the edge of the image, resulting
@@ -453,4 +449,3 @@ void gui_init(struct dt_iop_module_t *self)
 // vim: shiftwidth=2 expandtab tabstop=2 cindent
 // kate: tab-indents: off; indent-width 2; replace-tabs on; indent-mode cstyle; remove-trailing-spaces modified;
 // clang-format on
-

@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    Copyright (C) 2010-2023 darktable developers.
+    Copyright (C) 2010-2024 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -126,12 +126,7 @@ static void rcd_ppg_border(
 
   const float *input = in;
 
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(filters, out, width, height, border) \
-  shared(input) \
-  schedule(static)
-#endif
+  DT_OMP_FOR()
   for(int j = 3; j < height - 3; j++)
   {
     float *buf = out + (size_t)4 * width * j + 4 * 3;
@@ -196,11 +191,7 @@ static void rcd_ppg_border(
     }
   }
 // for all pixels: interpolate colors into float array
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(filters, out, width, height, margin) \
-  schedule(static)
-#endif
+  DT_OMP_FOR()
   for(int j = 1; j < height - 1; j++)
   {
     float *buf = out + (size_t)4 * width * j + 4;
@@ -279,9 +270,7 @@ static void rcd_ppg_border(
   }
 }
 
-#ifdef _OPENMP
-  #pragma omp declare simd aligned(in, out)
-#endif
+DT_OMP_DECLARE_SIMD(aligned(in, out))
 static void rcd_demosaic(
         dt_dev_pixelpipe_iop_t *piece,
         float *const restrict out,
@@ -307,10 +296,7 @@ static void rcd_demosaic(
   const int num_vertical = 1 + (height - 2 * RCD_BORDER -1) / RCD_TILEVALID;
   const int num_horizontal = 1 + (width - 2 * RCD_BORDER -1) / RCD_TILEVALID;
 
-#ifdef _OPENMP
-  #pragma omp parallel \
-  dt_omp_firstprivate(width, height, filters, out, in, scaler, revscaler)
-#endif
+  DT_OMP_PRAGMA(parallel firstprivate(width, height, filters, out, in, scaler, revscaler))
   {
     float *const VH_Dir = dt_alloc_align_float((size_t) DT_RCD_TILESIZE * DT_RCD_TILESIZE);
     // ensure that border elements which are read but never actually set below are zeroed out
@@ -325,9 +311,7 @@ static void rcd_demosaic(
     // No overlapping use so re-use same buffer
     float *const lpf = PQ_Dir;
 
-#ifdef _OPENMP
-  #pragma omp for schedule(simd:static) collapse(2)
-#endif
+    DT_OMP_PRAGMA(for schedule(simd:static) collapse(2))
     for(int tile_vertical = 0; tile_vertical < num_vertical; tile_vertical++)
     {
       for(int tile_horizontal = 0; tile_horizontal < num_horizontal; tile_horizontal++)
@@ -621,7 +605,11 @@ static int process_rcd_cl(
     if(data->green_eq != DT_IOP_GREEN_EQ_NO)
     {
       dev_green_eq = dt_opencl_alloc_device(devid, roi_in->width, roi_in->height, sizeof(float));
-      if(dev_green_eq == NULL) goto error;
+      if(dev_green_eq == NULL)
+      {
+        err = CL_MEM_OBJECT_ALLOCATION_FAILURE;
+        goto error;
+      }
       err = green_equilibration_cl(self, piece, dev_in, dev_green_eq, roi_in);
       if(err != CL_SUCCESS) goto error;
       dev_in = dev_green_eq;
@@ -631,7 +619,11 @@ static int process_rcd_cl(
     if(scaled)
     {
       dev_aux = dt_opencl_alloc_device(devid, roi_in->width, roi_in->height, sizeof(float) * 4);
-      if(dev_aux == NULL) goto error;
+      if(dev_aux == NULL)
+      {
+        err = CL_MEM_OBJECT_ALLOCATION_FAILURE;
+        goto error;
+      }
       width = roi_in->width;
       height = roi_in->height;
     }
@@ -639,7 +631,11 @@ static int process_rcd_cl(
       dev_aux = dev_out;
 
     dev_tmp = dt_opencl_alloc_device(devid, roi_in->width, roi_in->height, sizeof(float) * 4);
-    if(dev_tmp == NULL) goto error;
+    if(dev_tmp == NULL)
+    {
+      err = CL_MEM_OBJECT_ALLOCATION_FAILURE;
+      goto error;
+    }
 
     {
       const int myborder = 3;
@@ -684,6 +680,7 @@ static int process_rcd_cl(
     dt_opencl_release_mem_object(dev_tmp);
     dev_tmp = NULL;
 
+    err = CL_MEM_OBJECT_ALLOCATION_FAILURE;
     cfa = dt_opencl_alloc_device_buffer(devid, sizeof(float) * roi_in->width * roi_in->height);
     if(cfa == NULL) goto error;
     VH_dir = dt_opencl_alloc_device_buffer(devid, sizeof(float) * roi_in->width * roi_in->height);

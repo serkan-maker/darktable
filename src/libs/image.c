@@ -111,7 +111,8 @@ static void _group_helper_function(void)
     darktable.gui->expanded_group_id = NO_IMGID;
   dt_collection_update_query(darktable.collection,
                              DT_COLLECTION_CHANGE_RELOAD,
-                             DT_COLLECTION_PROP_GROUPING, imgs);
+                             DT_COLLECTION_PROP_UNDEF,
+                             imgs);
   dt_control_queue_redraw_center();
 }
 
@@ -139,7 +140,8 @@ static void _ungroup_helper_function(void)
   {
     darktable.gui->expanded_group_id = NO_IMGID;
     dt_collection_update_query(darktable.collection,
-                               DT_COLLECTION_CHANGE_RELOAD, DT_COLLECTION_PROP_GROUPING,
+                               DT_COLLECTION_CHANGE_RELOAD,
+                               DT_COLLECTION_PROP_UNDEF,
                                g_list_reverse(imgs));
     dt_control_queue_redraw_center();
   }
@@ -480,6 +482,7 @@ static void pastemode_combobox_changed(GtkWidget *widget,
 }
 
 #define ellipsize_button(button) gtk_label_set_ellipsize(GTK_LABEL(gtk_bin_get_child(GTK_BIN(button))), PANGO_ELLIPSIZE_END);
+
 void gui_init(dt_lib_module_t *self)
 {
   dt_lib_image_t *d = (dt_lib_image_t *)malloc(sizeof(dt_lib_image_t));

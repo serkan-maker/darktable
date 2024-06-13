@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    Copyright (C) 2020-2023 darktable developers.
+    Copyright (C) 2020-2024 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -49,7 +49,7 @@ typedef enum dt_iop_sigmoid_methods_type_t
 
 typedef enum dt_iop_sigmoid_base_primaries_t
 {
-  DT_SIGMOID_WORK_PROFILE = 0, // $DESCRIPTION: "work profile"
+  DT_SIGMOID_WORK_PROFILE = 0, // $DESCRIPTION: "working profile"
   DT_SIGMOID_REC2020 = 1, // $DESCRIPTION: "Rec2020"
   DT_SIGMOID_DISPLAY_P3 = 2, // $DESCRIPTION: "Display P3"
   DT_SIGMOID_ADOBE_RGB = 3, // $DESCRIPTION: "Adobe RGB (compatible)"
@@ -237,12 +237,15 @@ void init_presets(dt_iop_module_so_t *self)
 
   if(auto_apply_sigmoid)
   {
-    dt_gui_presets_add_generic(_("scene-referred default"), self->op, self->version(), NULL, 0, 1,
+    dt_gui_presets_add_generic(_("scene-referred default"),
+                               self->op, self->version(), NULL, 0, 1,
                                DEVELOP_BLEND_CS_RGB_SCENE);
 
-    dt_gui_presets_update_ldr(_("scene-referred default"), self->op, self->version(), FOR_RAW | FOR_MATRIX);
+    dt_gui_presets_update_format(_("scene-referred default"),
+                                 self->op, self->version(), FOR_RAW | FOR_MATRIX);
 
-    dt_gui_presets_update_autoapply(_("scene-referred default"), self->op, self->version(), TRUE);
+    dt_gui_presets_update_autoapply(_("scene-referred default"),
+                                    self->op, self->version(), TRUE);
   }
 
   // others
@@ -255,19 +258,22 @@ void init_presets(dt_iop_module_so_t *self)
   p.middle_grey_contrast = 1.22f;
   p.contrast_skewness = 0.65f;
   p.hue_preservation = 100.0f;
-  dt_gui_presets_add_generic(_("neutral gray"), self->op, self->version(), &p, sizeof(p), 1,
+  dt_gui_presets_add_generic(_("neutral gray"), self->op,
+                             self->version(), &p, sizeof(p), 1,
                              DEVELOP_BLEND_CS_RGB_SCENE);
 
   p.middle_grey_contrast = 1.6f;
   p.contrast_skewness = -0.2f;
   p.hue_preservation = 0.0f;
-  dt_gui_presets_add_generic(_("ACES 100-nit like"), self->op, self->version(), &p, sizeof(p), 1,
+  dt_gui_presets_add_generic(_("ACES 100-nit like"), self->op,
+                             self->version(), &p, sizeof(p), 1,
                              DEVELOP_BLEND_CS_RGB_SCENE);
 
   p.middle_grey_contrast = 1.0f;
   p.contrast_skewness = 0.0f;
   p.color_processing = DT_SIGMOID_METHOD_RGB_RATIO;
-  dt_gui_presets_add_generic(_("Reinhard"), self->op, self->version(), &p, sizeof(p), 1,
+  dt_gui_presets_add_generic(_("Reinhard"), self->op,
+                             self->version(), &p, sizeof(p), 1,
                              DEVELOP_BLEND_CS_RGB_SCENE);
 
   const float DEG_TO_RAD = DT_M_PI_F / 180.f;
@@ -287,15 +293,15 @@ void init_presets(dt_iop_module_so_t *self)
   p.blue_rotation = -3.f * DEG_TO_RAD;
   // Don't restore purity - try to avoid posterization.
   p.purity = 0.f;
-  // Constant base primaries (not dependent on work profile) to maintain a consistent behavior
+  // Constant base primaries (not dependent on work profile) to
+  // maintain a consistent behavior
   p.base_primaries = DT_SIGMOID_REC2020;
-  dt_gui_presets_add_generic(_("smooth"), self->op, self->version(), &p, sizeof(p), 1, DEVELOP_BLEND_CS_RGB_SCENE);
+  dt_gui_presets_add_generic(_("smooth"), self->op, self->version(),
+                             &p, sizeof(p), 1, DEVELOP_BLEND_CS_RGB_SCENE);
 }
 
 // Declared here as it is used in the commit params function
-#ifdef _OPENMP
-#pragma omp declare simd uniform(magnitude, paper_exp, film_fog, film_power, paper_power)
-#endif
+DT_OMP_DECLARE_SIMD(uniform(magnitude, paper_exp, film_fog, film_power, paper_power))
 static inline float _generalized_loglogistic_sigmoid(const float value,
                                                      const float magnitude,
                                                      const float paper_exp,
@@ -490,9 +496,7 @@ static const dt_iop_order_iccprofile_info_t * _get_base_profile(struct dt_develo
   return dt_ioppr_add_profile_info_to_list(dev, _get_base_profile_type(base_primaries), "", DT_INTENT_RELATIVE_COLORIMETRIC);
 }
 
-#ifdef _OPENMP
-#pragma omp declare simd
-#endif
+DT_OMP_DECLARE_SIMD()
 static inline void _desaturate_negative_values(const dt_aligned_pixel_t pix_in, dt_aligned_pixel_t pix_out)
 {
   const float pixel_average = fmaxf((pix_in[0] + pix_in[1] + pix_in[2]) / 3.0f, 0.0f);
@@ -582,11 +586,7 @@ void process_loglogistic_rgb_ratio(dt_dev_pixelpipe_iop_t *piece,
   const float contrast_power = module_data->film_power;
   const float skew_power = module_data->paper_power;
 
-#ifdef _OPENMP
-#pragma omp parallel for default(none)                                                                            \
-    dt_omp_firstprivate(npixels, white_target, black_target, paper_exp, film_fog, contrast_power, skew_power)     \
-    dt_omp_sharedconst(in, out) schedule(static)
-#endif
+  DT_OMP_FOR()
   for(size_t k = 0; k < 4 * npixels; k += 4)
   {
     const float *const restrict pix_in = in + k;
@@ -729,11 +729,7 @@ void process_loglogistic_per_channel(struct dt_develop_t *dev,
   dt_colormatrix_t pipe_to_base, base_to_rendering, rendering_to_pipe;
   _calculate_adjusted_primaries(module_data, pipe_work_profile, base_profile, pipe_to_base, base_to_rendering, rendering_to_pipe);
 
-#ifdef _OPENMP
-#pragma omp parallel for default(none)                                                                            \
-    dt_omp_firstprivate(npixels, white_target, paper_exp, film_fog, contrast_power, skew_power, hue_preservation, \
-                        pipe_to_base, base_to_rendering, rendering_to_pipe) dt_omp_sharedconst(in, out) schedule(static)
-#endif
+  DT_OMP_FOR()
   for(size_t k = 0; k < 4 * npixels; k += 4)
   {
     const float *const restrict pix_in = in + k;
@@ -940,7 +936,8 @@ void gui_init(dt_iop_module_t *self)
   dt_iop_module_t *sect = DT_IOP_SECTION_FOR_PARAMS(self, N_("primaries"));
 
   GtkWidget *base_primaries = dt_bauhaus_combobox_from_params(self, "base_primaries");
-  gtk_widget_set_tooltip_text(base_primaries, _("primaries to use as the base for below adjustments"));
+  gtk_widget_set_tooltip_text(base_primaries, _("primaries to use as the base for below adjustments\n"
+                                                "'working profile' uses the profile set in 'input color profile'"));
 
 #define SETUP_COLOR_COMBO(color, r, g, b, inset_tooltip, rotation_tooltip)                                        \
   slider = dt_bauhaus_slider_from_params(sect, #color "_inset");                                                  \

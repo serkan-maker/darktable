@@ -17,10 +17,6 @@
 */
 
 #include "bauhaus/bauhaus.h"
-#include "common/imagebuf.h"
-#include "common/tags.h"
-#include "common/variables.h"
-#include "common/datetime.h"
 #include "common/overlay.h"
 #include "control/control.h"
 #include "develop/develop.h"
@@ -31,24 +27,17 @@
 #include "dtgtk/resetlabel.h"
 #include "dtgtk/togglebutton.h"
 #include "gui/accelerators.h"
-#include "gui/color_picker_proxy.h"
 #include "gui/drag_and_drop.h"
 #include "gui/gtk.h"
 #include "iop/iop_api.h"
+
 #include <assert.h>
 #include <gtk/gtk.h>
 #include <inttypes.h>
-#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "common/file_location.h"
-#include "common/metadata.h"
-#include "common/utility.h"
-
 DT_MODULE_INTROSPECTION(1, dt_iop_overlay_params_t)
-
-// gchar *checksum = g_compute_checksum_for_data(G_CHECKSUM_MD5,data,length);
 
 typedef enum dt_iop_overlay_base_scale_t
 {
@@ -135,6 +124,7 @@ typedef struct dt_iop_overlay_gui_data_t
   GtkWidget *scale_svg;                              // scale reference of marker
   GtkWidget *rotate;
   GtkWidget *imgid;
+  gboolean drop_inside;
 } dt_iop_overlay_gui_data_t;
 
 /* Notes about the implementation.
@@ -154,14 +144,14 @@ typedef struct dt_iop_overlay_gui_data_t
 
 const char *name()
 {
-  return _("overlay");
+  return _("composite");
 }
 
 const char **description(struct dt_iop_module_t *self)
 {
   return dt_iop_set_description
     (self,
-     _("image overlay"),
+     _("combine with elements from a processed image"),
      _("corrective and creative"),
      _("linear, RGB, scene-referred"),
      _("linear, RGB"),
@@ -170,7 +160,7 @@ const char **description(struct dt_iop_module_t *self)
 
 const char *aliases()
 {
-  return _("composition|layering|stacked");
+  return _("layer|stack|overlay");
 }
 
 int flags()
@@ -213,12 +203,14 @@ static GList *_get_disabled_modules(const dt_iop_module_t *self,
     dt_iop_module_t *mod = (dt_iop_module_t *)(l->data);
 
     // if disable is actif
-    // - disable module except if gamma
-    // - disable overlay & enlargecanvas if overlay is working on
+    // - disable module except if gamma / finalscale
+    // - disable overlay, enlargecanvas if overlay is working on
     //   the current image. This is needed to avoid recursive
-    //   image references.
+    //   image references. Also disable crop, ashift which are not
+    //   wanted here (double crop / shift).
     if((disable
-        && !dt_iop_module_is(mod->so, "gamma"))
+        && !dt_iop_module_is(mod->so, "gamma")
+        && !dt_iop_module_is(mod->so, "finalscale"))
        || (is_current
            && (dt_iop_module_is(mod->so, "enlargecanvas")
                || dt_iop_module_is(mod->so, "overlay")
@@ -272,6 +264,8 @@ static void _setup_overlay(dt_iop_module_t *self,
     return;
   }
 
+  dt_develop_t *dev = self->dev;
+
   gboolean image_exists = dt_image_exists(imgid);
 
   // The overlay image could have been removed from collection and
@@ -283,7 +277,7 @@ static void _setup_overlay(dt_iop_module_t *self,
     {
       image_exists = TRUE;
       p->imgid = new_imgid;
-      dt_dev_add_history_item(darktable.develop, self, TRUE);
+      dt_dev_add_history_item(dev, self, TRUE);
       if(g)
         gtk_widget_queue_draw(GTK_WIDGET(g->area));
     }
@@ -298,8 +292,6 @@ static void _setup_overlay(dt_iop_module_t *self,
 
   if(image_exists)
   {
-    dt_develop_t *dev = self->dev;
-
     const size_t width  = dev->image_storage.width;
     const size_t height = dev->image_storage.width;
 
@@ -316,7 +308,7 @@ static void _setup_overlay(dt_iop_module_t *self,
                  -1,
                  &buf, NULL, &bw, &bh,
                  NULL, NULL,
-                 -1, disabled_modules);
+                 -1, disabled_modules, piece->pipe->devid, TRUE);
 
     uint8_t *old_buf = *pbuf;
 
@@ -326,12 +318,14 @@ static void _setup_overlay(dt_iop_module_t *self,
     data->buf_width  = bw;
     data->buf_height = bh;
 
+    dt_dev_add_history_item(dev, self, TRUE);
+
     *pbuf = buf;
     dt_free_align(old_buf);
   }
   else
   {
-    dt_control_log(_("image %d does not exists"), imgid);
+    dt_control_log(_("image %d does not exist"), imgid);
   }
 }
 
@@ -672,11 +666,7 @@ void process(struct dt_iop_module_t *self,
   /* render surface on output */
   const float opacity = data->opacity / 100.0f;
 
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(roi_out, in, out, image, opacity, ch)   \
-  schedule(static)
-#endif
+  DT_OMP_FOR()
   for(int j = 0; j < roi_out->height * roi_out->width; j++)
   {
     float *const i = in + ch*j;
@@ -703,6 +693,7 @@ static void _draw_thumb(GtkWidget *area,
                         gpointer user_data)
 {
   dt_iop_module_t *self = (dt_iop_module_t *)user_data;
+  dt_iop_overlay_gui_data_t *g = (dt_iop_overlay_gui_data_t *)self->gui_data;
   dt_iop_overlay_params_t *p = (dt_iop_overlay_params_t *)self->params;
 
   GtkAllocation allocation;
@@ -741,6 +732,10 @@ static void _draw_thumb(GtkWidget *area,
     dt_gui_gtk_set_source_rgb(crf, DT_GUI_COLOR_BG);
     cairo_set_line_width(crf, 3.0);
     cairo_rectangle(crf, 0.0, 0.0, width, height);
+    if(g->drop_inside)
+    {
+      cairo_fill(crf);
+    }
     cairo_move_to(crf, 0.0, 0.0);
     cairo_line_to(crf, width, height);
     cairo_move_to(crf, 0.0, height);
@@ -754,7 +749,7 @@ static void _draw_thumb(GtkWidget *area,
     PangoLayout *layout = pango_cairo_create_layout(crf);
     pango_layout_set_font_description(layout, desc);
     // TRANSLATORS: This text must be very narrow, check in the GUI that it is not truncated
-    pango_layout_set_text(layout, _("drop\nimage\nhere"), -1);
+    pango_layout_set_text(layout, _("drop\nimage\nfrom filmstrip\nhere"), -1);
 
     PangoRectangle ink;
     pango_layout_get_pixel_extents(layout, &ink, NULL);
@@ -962,8 +957,8 @@ static void _drag_and_drop_received(GtkWidget *widget,
       if(dt_overlay_used_by(imgid, self->dev->image_storage.id))
       {
         dt_control_log
-          (_("cannot use image %d as overlay"
-             " as it is using itself the current image as overlay"),
+          (_("cannot use image %d as an overlay"
+             " as it is using the current image as an overlay itself"),
            imgid);
       }
       else
@@ -973,8 +968,10 @@ static void _drag_and_drop_received(GtkWidget *widget,
           dt_overlay_remove(self->dev->image_storage.id, p->imgid);
 
         // and record the new one
-        p->imgid = imgid;
-        p->hash = 0;
+        p->imgid         = imgid;
+        p->hash          = 0;
+        p->buf_width     = 0;
+        p->buf_height    = 0;
         _clear_cache_entry(self, index);
 
         dt_overlay_record(self->dev->image_storage.id, p->imgid);
@@ -995,6 +992,33 @@ static void _drag_and_drop_received(GtkWidget *widget,
   gtk_drag_finish(context, success, FALSE, time);
 }
 
+static gboolean _on_drag_motion(GtkWidget *widget,
+                                GdkDragContext *dc,
+                                gint x,
+                                gint y,
+                                guint time,
+                                gpointer user_data)
+{
+  dt_iop_module_t *self = (dt_iop_module_t *)user_data;
+  dt_iop_overlay_gui_data_t *g = (dt_iop_overlay_gui_data_t *)self->gui_data;
+
+  g->drop_inside = TRUE;
+  gtk_widget_queue_draw(widget);
+  return TRUE;
+}
+
+static void _on_drag_leave(GtkWidget *widget,
+                           GdkDragContext *dc,
+                           guint time,
+                           gpointer user_data)
+{
+  dt_iop_module_t *self = (dt_iop_module_t *)user_data;
+  dt_iop_overlay_gui_data_t *g = (dt_iop_overlay_gui_data_t *)self->gui_data;
+
+  g->drop_inside = FALSE;
+  gtk_widget_queue_draw(widget);
+}
+
 void gui_init(struct dt_iop_module_t *self)
 {
   dt_iop_overlay_gui_data_t *g = IOP_GUI_ALLOC(overlay);
@@ -1007,7 +1031,7 @@ void gui_init(struct dt_iop_module_t *self)
   gtk_grid_set_column_spacing(grid, DT_PIXEL_APPLY_DPI(10));
   int line = 0;
 
-  g->area = GTK_DRAWING_AREA(dtgtk_drawing_area_new_with_aspect_ratio(1.0));
+  g->area = GTK_DRAWING_AREA(dtgtk_drawing_area_new_with_height(0));
   g_signal_connect(G_OBJECT(g->area), "draw", G_CALLBACK(_draw_thumb), self);
   gtk_widget_set_size_request(GTK_WIDGET(g->area), 150, 150);
   gtk_grid_attach(grid, GTK_WIDGET(g->area), 0, line++, 1, 2);
@@ -1024,6 +1048,10 @@ void gui_init(struct dt_iop_module_t *self)
 
   g_signal_connect(GTK_WIDGET(g->area),
                    "drag-data-received", G_CALLBACK(_drag_and_drop_received), self);
+  g_signal_connect(GTK_WIDGET(g->area),
+                   "drag-motion", G_CALLBACK(_on_drag_motion), self);
+  g_signal_connect(GTK_WIDGET(g->area),
+                   "drag-leave", G_CALLBACK(_on_drag_leave), self);
 
   gtk_box_pack_start(GTK_BOX(self->widget), GTK_WIDGET(grid), TRUE, TRUE, 0);
 

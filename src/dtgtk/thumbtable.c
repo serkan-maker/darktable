@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    Copyright (C) 2019-2023 darktable developers.
+    Copyright (C) 2024 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -469,6 +469,7 @@ static gboolean _thumbtable_update_scrollbars(dt_thumbtable_t *table)
     {
       dt_view_set_scrollbar(darktable.view_manager->current_view,
                             0, 0, 0, 0, lbefore, 0, maxvalue + 1, pagesize);
+      table->code_scrolling = FALSE;
       return TRUE;
     }
   }
@@ -1055,13 +1056,24 @@ static gboolean _event_scroll_compressed(gpointer user_data)
     // starting from here, all further scroll event will count for the next round
     table->scroll_value = 0;
 
-    // for filemanager and filmstrip, scrolled = move for
-    // filemanager we ensure to fallback to show full row (can be
+    // For filemanager and filmstrip, scrolled = move.
+    // For filemanager we ensure to fallback to show full row (can be
     // half shown if scrollbar used)
     int move = table->thumb_size * delta;
-    // if we scroll up and the thumb is half visible, then realign first
-    if(delta < 0 && table->thumbs_area.y != 0)
-      move += table->thumb_size -table->thumbs_area.y;
+
+    // if the top thumb row is only partially visible, then realign first
+    const int partial_height = table->thumbs_area.y % table->thumb_size;
+    if(partial_height)
+    {
+      if(delta < 0)
+      {
+        move = partial_height;
+      }
+      else
+      {
+        move = table->thumb_size + partial_height;
+      }
+    }
 
     _move(table, 0, -move, TRUE);
 
@@ -1083,9 +1095,9 @@ static gboolean _event_scroll(GtkWidget *widget,
 {
   GdkEventScroll *e = (GdkEventScroll *)event;
   dt_thumbtable_t *table = (dt_thumbtable_t *)user_data;
-  int delta;
+  int delta_x, delta_y;
 
-  if(dt_gui_get_scroll_unit_delta(e, &delta))
+  if(dt_gui_get_scroll_unit_deltas(e, &delta_x, &delta_y))
   {
     // for zoomable, scroll = zoom
     if(table->mode == DT_THUMBTABLE_MODE_ZOOM
@@ -1093,7 +1105,7 @@ static gboolean _event_scroll(GtkWidget *widget,
     {
       if(table->mode == DT_THUMBTABLE_MODE_FILMSTRIP)
       {
-        const int sx = CLAMP(table->view_width / ((table->view_width / table->thumb_size / 2 + delta) * 2 + 1),
+        const int sx = CLAMP(table->view_width / ((table->view_width / table->thumb_size / 2 + (delta_x+delta_y)) * 2 + 1),
                              dt_conf_get_int("min_panel_height"),
                              dt_conf_get_int("max_panel_height"));
         dt_ui_panel_set_size(darktable.gui->ui, DT_UI_PANEL_BOTTOM, sx);
@@ -1101,13 +1113,13 @@ static gboolean _event_scroll(GtkWidget *widget,
       else
       {
         const int old = dt_view_lighttable_get_zoom(darktable.view_manager);
-        const int new = CLAMP(old + delta, 1, DT_LIGHTTABLE_MAX_ZOOM);
+        const int new = CLAMP(old + delta_y, 1, DT_LIGHTTABLE_MAX_ZOOM);
         dt_thumbtable_zoom_changed(table, old, new);
       }
     }
     else if(table->mode == DT_THUMBTABLE_MODE_FILMSTRIP)
     {
-      _move(table, -delta * (dt_modifier_is(e->state, GDK_SHIFT_MASK)
+      _move(table, -(delta_x+delta_y) * (dt_modifier_is(e->state, GDK_SHIFT_MASK)
                   ? table->view_width - table->thumb_size
                   : table->thumb_size), 0, TRUE);
 
@@ -1124,7 +1136,7 @@ static gboolean _event_scroll(GtkWidget *widget,
       {
         table->scroll_timeout_id = g_timeout_add(10, _event_scroll_compressed, table);
       }
-      table->scroll_value += delta;
+      table->scroll_value += delta_y;
     }
   }
   // we stop here to avoid scrolledwindow to move
@@ -1194,6 +1206,20 @@ static void _lighttable_expose_empty(cairo_t *cr,
     cairo_move_to(cr, offx - DT_PIXEL_APPLY_DPI(10.0f), offy + 6 * ls - ls * 0.25f);
     cairo_rel_line_to(cr, -offx + 10.0f, 0.0f);
     dt_gui_gtk_set_source_rgba(cr, DT_GUI_COLOR_LIGHTTABLE_FONT, at);
+    cairo_stroke(cr);
+
+    pango_layout_set_text(layout,
+       _("try the 'no-click' workflow: hover on an image and use"), -1);
+    pango_layout_get_pixel_extents(layout, &ink, NULL);
+    cairo_move_to(cr, offx, offy + 9 * ls - ink.height - ink.x);
+    dt_gui_gtk_set_source_rgb(cr, DT_GUI_COLOR_LIGHTTABLE_FONT);
+    pango_cairo_show_layout(cr, layout);
+    pango_layout_set_text(layout,
+       _("keyboard shortcuts to apply ratings, colors, styles, etc."), -1);
+    pango_layout_get_pixel_extents(layout, &ink, NULL);
+    cairo_move_to(cr, offx, offy + 10 * ls - ink.height - ink.x);
+    dt_gui_gtk_set_source_rgb(cr, DT_GUI_COLOR_LIGHTTABLE_FONT);
+    pango_cairo_show_layout(cr, layout);
     cairo_stroke(cr);
   }
 

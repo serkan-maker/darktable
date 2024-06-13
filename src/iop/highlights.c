@@ -1,6 +1,6 @@
 /*
    This file is part of darktable,
-   Copyright (C) 2010-2023 darktable developers.
+   Copyright (C) 2010-2024 darktable developers.
 
    darktable is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -403,6 +403,21 @@ void tiling_callback(struct dt_iop_module_t *self,
   tiling->xalign = is_xtrans ? 3 : 2;
   tiling->yalign = is_xtrans ? 3 : 2;
   tiling->overlap = 0;
+  tiling->factor = 2.0f;
+  tiling->factor_cl = 2.0f;
+  tiling->maxbuf = 1.0f;
+  tiling->maxbuf_cl = 1.0f;
+  tiling->overhead = 0;
+  tiling->overlap = 0;
+
+  dt_develop_blend_params_t *const bldata =
+    (dt_develop_blend_params_t *const)piece->blendop_data;
+  if(bldata
+    && (piece->pipe->store_all_raster_masks || dt_iop_is_raster_mask_used(self, BLEND_RASTER_ID)))
+  {
+    tiling->factor += 0.5f;
+    tiling->factor_cl += 0.5f;
+  }
 
   if(d->mode == DT_IOP_HIGHLIGHTS_LAPLACIAN && is_bayer)
   {
@@ -412,15 +427,11 @@ void tiling_callback(struct dt_iop_module_t *self,
     const int scales = CLAMP((int)ceilf(log2f(final_radius)), 1, MAX_NUM_SCALES);
     const int max_filter_radius = (1 << scales);
 
-    tiling->factor = 2.f + 2.f * 4 + 6.f * 4 / (DS_FACTOR * DS_FACTOR);
-    tiling->factor_cl =  2.f + 3.f * 4 + 5.f * 4 / (DS_FACTOR * DS_FACTOR);
+    tiling->factor += 2.f * 4 + 6.f * 4 / (DS_FACTOR * DS_FACTOR);
+    tiling->factor_cl += 3.f * 4 + 5.f * 4 / (DS_FACTOR * DS_FACTOR);
 
     // The wavelets decomposition uses a temp buffer of size 4 × ds_width
     tiling->maxbuf = 1.f / roi_in->height * dt_get_num_threads() * 4.f / DS_FACTOR;
-
-    // No temp buffer on GPU
-    tiling->maxbuf_cl = 1.0f;
-    tiling->overhead = 0;
 
     // Note : if we were not doing anything iterative,
     // max_filter_radius would not need to be factored more.
@@ -436,22 +447,16 @@ void tiling_callback(struct dt_iop_module_t *self,
     // even if the algorithm can't tile we want to calculate memory for pixelpipe checks and a possible warning
     const int segments = roi_out->width * roi_out->height / 4000; // segments per mpix
     tiling->overhead = segments * 5 * 5 * sizeof(int); // segmentation stuff
-    tiling->factor = 3.0f;
-    tiling->maxbuf = 1.0f;
+    tiling->factor += 1.0f;
     return;
   }
 
   if(d->mode == DT_IOP_HIGHLIGHTS_OPPOSED)
   {
-    tiling->factor = 2.5f; // enough for in&output buffers plus masks
-    tiling->maxbuf = 1.0f;
-    tiling->overhead = 0;
+    tiling->factor += 0.5f; // enough for in&output buffers plus masks
+    tiling->factor_cl += 0.5f; // enough for in&output buffers plus masks
     return;
   }
-
-  tiling->factor = 2.0f;  // in + out
-  tiling->maxbuf = 1.0f;
-  tiling->overhead = 0;
 
   if(d->mode == DT_IOP_HIGHLIGHTS_LCH)
   {
@@ -616,11 +621,7 @@ static void process_clip(dt_dev_pixelpipe_iop_t *piece,
 
   const int ch = piece->pipe->dsc.filters ? 1 : 4;
   const size_t msize = (size_t)roi_out->width * roi_out->height * ch;
-#ifdef _OPENMP
-#pragma omp parallel for SIMD() default(none) \
-    dt_omp_firstprivate(clip, in, out, msize) \
-    schedule(static)
-#endif
+  DT_OMP_FOR()
   for(size_t k = 0; k < msize; k++)
     out[k] = fminf(clip, in[k]);
 }
@@ -648,11 +649,7 @@ static void process_visualize(dt_dev_pixelpipe_iop_t *piece,
   if(filters == 0)
   {
     const size_t npixels = roi_out->width * (size_t)roi_out->height;
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-    dt_omp_firstprivate(in, out, clips, npixels) \
-    schedule(static)
-#endif
+    DT_OMP_FOR()
     for(size_t k = 0; k < 4*npixels; k += 4)
     {
       for_each_channel(c)
@@ -662,11 +659,7 @@ static void process_visualize(dt_dev_pixelpipe_iop_t *piece,
   }
   else
   {
-#ifdef _OPENMP
-  #pragma omp parallel for default(none) \
-  dt_omp_firstprivate(in, out, clips, roi_in, roi_out, filters, xtrans, is_xtrans) \
-  schedule(static)
-#endif
+    DT_OMP_FOR()
     for(int row = 0; row < roi_out->height; row++)
     {
       for(int col = 0; col < roi_out->width; col++)
@@ -701,6 +694,7 @@ void process(struct dt_iop_module_t *self,
   dt_iop_highlights_gui_data_t *g = (dt_iop_highlights_gui_data_t *)self->gui_data;
 
   const gboolean fullpipe = piece->pipe->type & DT_DEV_PIXELPIPE_FULL;
+  const gboolean fastmode = piece->pipe->type & DT_DEV_PIXELPIPE_FAST;
   if(g && fullpipe)
   {
     if(g->hlr_mask_mode != DT_HIGHLIGHTS_MASK_OFF)
@@ -718,7 +712,7 @@ void process(struct dt_iop_module_t *self,
   gboolean high_quality = TRUE;
   if(piece->pipe->type & DT_DEV_PIXELPIPE_THUMBNAIL)
   {
-    const int level = dt_mipmap_cache_get_matching_size(darktable.mipmap_cache, piece->pipe->final_width, piece->pipe->final_height);
+    const dt_mipmap_size_t level = dt_mipmap_cache_get_matching_size(darktable.mipmap_cache, piece->pipe->final_width, piece->pipe->final_height);
     const char *min = dt_conf_get_string_const("plugins/lighttable/thumbnail_hq_min_level");
     const dt_mipmap_size_t min_s = dt_mipmap_cache_get_min_mip_from_pref(min);
     high_quality = (level >= min_s);
@@ -742,7 +736,9 @@ void process(struct dt_iop_module_t *self,
     return;
   }
 
-  switch(data->mode)
+  const dt_iop_highlights_mode_t dmode = fastmode && (data->mode == DT_IOP_HIGHLIGHTS_SEGMENTS)
+                                          ? DT_IOP_HIGHLIGHTS_OPPOSED : data->mode;
+  switch(dmode)
   {
     case DT_IOP_HIGHLIGHTS_INPAINT: // a1ex's (magiclantern) idea of color inpainting:
     {
@@ -754,21 +750,13 @@ void process(struct dt_iop_module_t *self,
       if(filters == 9u)
       {
         const uint8_t(*const xtrans)[6] = (const uint8_t(*const)[6])piece->pipe->dsc.xtrans;
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-        dt_omp_firstprivate(clips, filters, ivoid, ovoid, roi_in, roi_out, xtrans) \
-        schedule(static)
-#endif
+        DT_OMP_FOR()
         for(int j = 0; j < roi_out->height; j++)
         {
           interpolate_color_xtrans(ivoid, ovoid, roi_in, roi_out, 0, 1, j, clips, xtrans, 0);
           interpolate_color_xtrans(ivoid, ovoid, roi_in, roi_out, 0, -1, j, clips, xtrans, 1);
         }
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-        dt_omp_firstprivate(clips, filters, ivoid, ovoid, roi_in, roi_out, xtrans) \
-        schedule(static)
-#endif
+        DT_OMP_FOR()
         for(int i = 0; i < roi_out->width; i++)
         {
           interpolate_color_xtrans(ivoid, ovoid, roi_in, roi_out, 1, 1, i, clips, xtrans, 2);
@@ -777,12 +765,7 @@ void process(struct dt_iop_module_t *self,
       }
       else
       {
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-        dt_omp_firstprivate(clips, filters, ivoid, ovoid, roi_out) \
-        shared(data, piece) \
-        schedule(static)
-#endif
+        DT_OMP_FOR()
         for(int j = 0; j < roi_out->height; j++)
         {
           interpolate_color(ivoid, ovoid, roi_out, 0, 1, j, clips, filters, 0);
@@ -790,12 +773,7 @@ void process(struct dt_iop_module_t *self,
         }
 
 // up/down directions
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-        dt_omp_firstprivate(clips, filters, ivoid, ovoid, roi_out) \
-        shared(data, piece) \
-        schedule(static)
-#endif
+        DT_OMP_FOR()
         for(int i = 0; i < roi_out->width; i++)
         {
           interpolate_color(ivoid, ovoid, roi_out, 1, 1, i, clips, filters, 2);

@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    Copyright (C) 2011-2023 darktable developers.
+    Copyright (C) 2011-2024 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -364,15 +364,13 @@ gboolean distort_transform(dt_iop_module_t *self,
   // nothing to be done if parameters are set to neutral values (no top/left border)
   if(border_size_l == 0 && border_size_t == 0) return TRUE;
 
-#ifdef _OPENMP
-#pragma omp parallel for simd default(none) \
-  dt_omp_firstprivate(points, points_count, border_size_l, border_size_t)  \
-  schedule(static) if(points_count > 100) aligned(points:64)
-#endif
+  float *const pts = DT_IS_ALIGNED(points);
+
+  DT_OMP_FOR(if(points_count > 100))
   for(size_t i = 0; i < points_count * 2; i += 2)
   {
-    points[i] += border_size_l;
-    points[i + 1] += border_size_t;
+    pts[i] += border_size_l;
+    pts[i + 1] += border_size_t;
   }
 
   return TRUE;
@@ -393,15 +391,12 @@ gboolean distort_backtransform(dt_iop_module_t *self,
   // nothing to be done if parameters are set to neutral values (no top/left border)
   if(border_size_l == 0 && border_size_t == 0) return TRUE;
 
-#ifdef _OPENMP
-#pragma omp parallel for simd default(none) \
-  dt_omp_firstprivate(points, points_count, border_size_l, border_size_t)  \
-  schedule(static) if(points_count > 100) aligned(points:64)
-#endif
+  float *const pts = DT_IS_ALIGNED(points);
+  DT_OMP_FOR(if(points_count > 100))
   for(size_t i = 0; i < points_count * 2; i += 2)
   {
-    points[i] -= border_size_l;
-    points[i + 1] -= border_size_t;
+    pts[i] -= border_size_l;
+    pts[i + 1] -= border_size_t;
   }
 
   return TRUE;
@@ -428,11 +423,7 @@ void distort_mask(struct dt_iop_module_t *self,
   dt_iop_image_fill(out, 0.0f, roi_out->width, roi_out->height, 1);
 
   // blit image inside border and fill the output with previous processed out
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(roi_in, roi_out, border_in_x, border_in_y, in, out)   \
-  schedule(static)
-#endif
+  DT_OMP_FOR()
   for(int j = 0; j < roi_in->height; j++)
   {
     float *outb = out + (size_t)(j + border_in_y) * roi_out->width + border_in_x;
@@ -619,15 +610,13 @@ int process_cl(struct dt_iop_module_t *self,
 
   const int width = roi_out->width;
   const int height = roi_out->height;
-  size_t sizes[2] = { ROUNDUPDWD(width, devid), ROUNDUPDHT(height, devid) };
 
   // ----- Filling border
   const float col[4] = { d->color[0], d->color[1], d->color[2], 1.0f };
   const int zero = 0;
-  dt_opencl_set_kernel_args(devid, gd->kernel_borders_fill,
-                            0, CLARG(dev_out), CLARG(zero), CLARG(zero),
+  err = dt_opencl_enqueue_kernel_2d_args(devid, gd->kernel_borders_fill, width, height,
+                            CLARG(dev_out), CLARG(zero), CLARG(zero),
                             CLARG(width), CLARG(height), CLARG(col));
-  err = dt_opencl_enqueue_kernel_2d(devid, gd->kernel_borders_fill, sizes);
   if(err != CL_SUCCESS) goto error;
 
   if(binfo.frame_size != 0)
@@ -641,20 +630,18 @@ int process_cl(struct dt_iop_module_t *self,
     const int roi_frame_out_width  = binfo.frame_br_out_x - binfo.frame_tl_out_x;
     const int roi_frame_out_height = binfo.frame_br_out_y - binfo.frame_tl_out_y;
 
-    dt_opencl_set_kernel_args(devid, gd->kernel_borders_fill, 0,
+    err = dt_opencl_enqueue_kernel_2d_args(devid, gd->kernel_borders_fill, width, height,
                               CLARG(dev_out),
                               CLARG(binfo.frame_tl_out_x), CLARG(binfo.frame_tl_out_y),
                               CLARG(roi_frame_out_width), CLARG(roi_frame_out_height),
                               CLARG(col_frame));
-    err = dt_opencl_enqueue_kernel_2d(devid, gd->kernel_borders_fill, sizes);
     if(err != CL_SUCCESS) goto error;
 
-    dt_opencl_set_kernel_args(devid, gd->kernel_borders_fill, 0,
+    err = dt_opencl_enqueue_kernel_2d_args(devid, gd->kernel_borders_fill, width, height,
                               CLARG(dev_out),
                               CLARG(binfo.frame_tl_in_x), CLARG(binfo.frame_tl_in_y),
                               CLARG(roi_frame_in_width), CLARG(roi_frame_in_height),
                               CLARG(col));
-    err = dt_opencl_enqueue_kernel_2d(devid, gd->kernel_borders_fill, sizes);
     if(err != CL_SUCCESS) goto error;
   }
 

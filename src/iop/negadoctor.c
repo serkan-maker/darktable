@@ -350,16 +350,11 @@ void process(struct dt_iop_module_t *const self, dt_dev_pixelpipe_iop_t *const p
     soft_clip_comp[c] = d->soft_clip_comp;
   }
   // Unpack vectors one by one with extra pragmas to be sure the compiler understands they can be vectorized
-  const float *const restrict Dmin = __builtin_assume_aligned(d->Dmin, 16);
-  const float *const restrict wb_high = __builtin_assume_aligned(d->wb_high, 16);
-  const float *const restrict offset = __builtin_assume_aligned(d->offset, 16);
+  const float *const restrict Dmin = DT_IS_ALIGNED_PIXEL(d->Dmin);
+  const float *const restrict wb_high = DT_IS_ALIGNED_PIXEL(d->wb_high);
+  const float *const restrict offset = DT_IS_ALIGNED_PIXEL(d->offset);
 
-#ifdef _OPENMP
-  #pragma omp parallel for simd default(none) \
-    dt_omp_firstprivate(d, in, out, roi_out, exposure, black, gamma, soft_clip, soft_clip_comp, \
-                        Dmin, wb_high, offset)                                              \
-    aligned(in, out:64)
-#endif
+  DT_OMP_FOR()
   for(size_t k = 0; k < (size_t)roi_out->height * roi_out->width * 4; k += 4)
   {
     const float *const restrict pix_in = in + k;

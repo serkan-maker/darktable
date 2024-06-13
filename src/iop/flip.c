@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    Copyright (C) 2011-2023 darktable developers.
+    Copyright (C) 2011-2024 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -77,7 +77,7 @@ const char *name()
 
 const char *aliases()
 {
-  return _("rotation|flip");
+  return _("rotation|flip|mirror");
 }
 
 int default_group()
@@ -224,11 +224,7 @@ gboolean distort_transform(dt_iop_module_t *self,
   // nothing to be done if parameters are set to neutral values (no flip or swap)
   if(d->orientation == 0) return TRUE;
 
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-    dt_omp_firstprivate(points_count, points, d, piece) \
-    schedule(static) if(points_count > 500)
-#endif
+  DT_OMP_FOR(if(points_count > 500))
   for(size_t i = 0; i < points_count * 2; i += 2)
   {
     float x = points[i];
@@ -263,11 +259,7 @@ gboolean distort_backtransform(dt_iop_module_t *self,
   // nothing to be done if parameters are set to neutral values (no flip or swap)
   if(d->orientation == 0) return TRUE;
 
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-    dt_omp_firstprivate(points_count, points, d, piece) \
-    schedule(static) if(points_count > 500)
-#endif
+  DT_OMP_FOR(if(points_count > 500))
   for(size_t i = 0; i < points_count * 2; i += 2)
   {
     float x, y;
@@ -466,7 +458,7 @@ void init_presets(dt_iop_module_so_t *self)
   p.orientation = ORIENTATION_NULL;
   dt_gui_presets_add_generic(_("auto"), self->op,
                              self->version(), &p, sizeof(p), 1, DEVELOP_BLEND_CS_NONE);
-  dt_gui_presets_update_autoapply(_("auto"), self->op, self->version(), 1);
+  dt_gui_presets_update_autoapply(_("auto"), self->op, self->version(), TRUE);
 
   p.orientation = ORIENTATION_NONE;
   dt_gui_presets_add_generic(_("no rotation"), self->op,

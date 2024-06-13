@@ -81,7 +81,7 @@ if (USE_OPENMP)
 
         # Clang has an option to specify the OpenMP standard to use. Specify it.
         # FIXME: Implement this in FindOpenMP.cmake
-        set(OPENMP_VERSION_SPECIFIER "-fopenmp-version=45")
+        set(OPENMP_VERSION_SPECIFIER "-fopenmp-version=51")
 
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OPENMP_VERSION_SPECIFIER}")
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OPENMP_VERSION_SPECIFIER}")
@@ -391,15 +391,6 @@ if(USE_XMLLINT)
     message(STATUS "Found xmllint")
   endif(${Xmllint_BIN} STREQUAL "Xmllint_BIN-NOTFOUND")
 endif(USE_XMLLINT)
-
-find_program(exiftool_BIN exiftool)
-if(${exiftool_BIN} STREQUAL "exiftool_BIN-NOTFOUND")
-  message(STATUS "Missing exiftool")
-  set(HAVE_EXIFTOOL 0)
-else()
-  message(STATUS "Found exiftool")
-  set(HAVE_EXIFTOOL 1)
-endif()
 
 # done with looking for programs
 message(STATUS "All external programs found")

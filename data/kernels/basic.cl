@@ -3,7 +3,7 @@
     copyright (c) 2009-2013 johannes hanika.
     copyright (c) 2014 Ulrich Pegelow.
     copyright (c) 2014 LebedevRI.
-    Copyright (C) 2022-2023 darktable developers.
+    Copyright (C) 2022-2024 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -324,7 +324,8 @@ static float _calc_refavg(
         int row,
         int col,
         int maxrow,
-        int maxcol)
+        int maxcol,
+        global const float *correction)
 {
   float mean[3] = { 0.0f, 0.0f, 0.0f };
   float sum[3] =  { 0.0f, 0.0f, 0.0f };
@@ -348,7 +349,7 @@ static float _calc_refavg(
 
   const float onethird = 1.0f / 3.0f;
   for(int c = 0; c < 3; c++)
-    mean[c] = (cnt[c] > 0.0f) ? pow(sum[c] / cnt[c], onethird) : 0.0f;
+    mean[c] = (cnt[c] > 0.0f) ? pow((correction[c] * sum[c]) / cnt[c], onethird) : 0.0f;
 
   const float croot_refavg[3] = { 0.5f * (mean[1] + mean[2]), 0.5f * (mean[0] + mean[2]), 0.5f * (mean[0] + mean[1])};
   const int color = (filters == 9u) ? FCxtrans(row, col, xtrans) : FC(row, col, filters);
@@ -472,7 +473,8 @@ kernel void highlights_chroma(
         const int mwidth,
         const unsigned int filters,
         global const unsigned char (*const xtrans)[6],
-        global const float *clips)
+        global const float *clips,
+        global const float *correction)
 {
   const int row = get_global_id(0);
 
@@ -489,7 +491,7 @@ kernel void highlights_chroma(
     const int px = color * msize + mad24(row/3, mwidth, col/3);
     if(mask[px] && (inval > 0.2f*clips[color]) && (inval < clips[color]))
     {
-      const float ref = _calc_refavg(in, xtrans, filters, row, col, height, width);
+      const float ref = _calc_refavg(in, xtrans, filters, row, col, height, width, correction);
       sum[color] += inval - ref;
       cnt[color] += 1.0f;
     }
@@ -518,6 +520,7 @@ kernel void highlights_opposed(
         global const unsigned char (*const xtrans)[6],
         global const float *clips,
         global const float *chroma,
+        global const float *correction,
         const int fastcopymode)
 {
   const int x = get_global_id(0);
@@ -537,7 +540,7 @@ kernel void highlights_opposed(
       const int color = (filters == 9u) ? FCxtrans(irow, icol, xtrans) : FC(irow, icol, filters);
       if(val >= clips[color])
       {
-        const float ref = _calc_refavg(in, xtrans, filters, irow, icol, iheight, iwidth);
+        const float ref = _calc_refavg(in, xtrans, filters, irow, icol, iheight, iwidth, correction);
         val = fmax(val, ref + chroma[color]);
       }
     }
@@ -1364,20 +1367,35 @@ lerp_lookup_unbounded0(read_only image2d_t lut, const float x, global const floa
   else return x;
 }
 
-
-/* kernel for the plugin colorin: unbound processing */
+/* kernel for the plugin colorin: plain correction */
 kernel void
-colorin_unbound (read_only image2d_t in, write_only image2d_t out, const int width, const int height,
-                 global float *cmat, global float *lmat,
-                 read_only image2d_t lutr, read_only image2d_t lutg, read_only image2d_t lutb,
-                 const int blue_mapping, global const float (*const a)[3])
+colorin_correct (read_only image2d_t in, write_only image2d_t out, const int width, const int height,
+                 global const float *corr)
 {
   const int x = get_global_id(0);
   const int y = get_global_id(1);
 
   if(x >= width || y >= height) return;
 
-  float4 pixel = read_imagef(in, sampleri, (int2)(x, y));
+  const float4 corval = (const float4)(corr[0], corr[1], corr[2], corr[3]);
+  float4 pixel = corval * read_imagef(in, sampleri, (int2)(x, y));
+  write_imagef (out, (int2)(x, y), pixel);
+}
+
+/* kernel for the plugin colorin: unbound processing */
+kernel void
+colorin_unbound (read_only image2d_t in, write_only image2d_t out, const int width, const int height,
+                 global float *cmat, global float *lmat,
+                 read_only image2d_t lutr, read_only image2d_t lutg, read_only image2d_t lutb,
+                 const int blue_mapping, global const float (*const a)[3], global const float *corr)
+{
+  const int x = get_global_id(0);
+  const int y = get_global_id(1);
+
+  if(x >= width || y >= height) return;
+
+  const float4 corval = (const float4)(corr[0], corr[1], corr[2], corr[3]);
+  float4 pixel = corval * read_imagef(in, sampleri, (int2)(x, y));
 
   float cam[3], XYZ[3];
   cam[0] = lerp_lookup_unbounded0(lutr, pixel.x, a[0]);
@@ -1420,14 +1438,15 @@ kernel void
 colorin_clipping (read_only image2d_t in, write_only image2d_t out, const int width, const int height,
                   global float *cmat, global float *lmat,
                   read_only image2d_t lutr, read_only image2d_t lutg, read_only image2d_t lutb,
-                  const int blue_mapping, global const float (*const a)[3])
+                  const int blue_mapping, global const float (*const a)[3], global const float *corr)
 {
   const int x = get_global_id(0);
   const int y = get_global_id(1);
 
   if(x >= width || y >= height) return;
 
-  float4 pixel = read_imagef(in, sampleri, (int2)(x, y));
+  const float4 corval = (const float4)(corr[0], corr[1], corr[2], corr[3]);
+  float4 pixel = corval * read_imagef(in, sampleri, (int2)(x, y));
 
   float cam[3], RGB[3], XYZ[3];
   cam[0] = lerp_lookup_unbounded0(lutr, pixel.x, a[0]);
@@ -2442,7 +2461,9 @@ ashift_bilinear(read_only image2d_t in, write_only image2d_t out, const int widt
   int tx = rx;
   int ty = ry;
 
-  float4 pixel = (tx >= 0 && ty >= 0 && tx < iwidth && ty < iheight) ? read_imagef(in, samplerf, (float2)(rx, ry)) : (float4)0.0f;
+  float4 pixel = (tx >= 0 && ty >= 0 && tx < iwidth && ty < iheight)
+                ? fmax(0.0f, read_imagef(in, samplerf, (float2)(rx, ry)))
+                : (float4)0.0f;
 
   write_imagef (out, (int2)(x, y), pixel);
 }
@@ -2515,7 +2536,9 @@ ashift_bicubic (read_only image2d_t in,
     weight += w;
   }
 
-  pixel = (tx >= 0 && ty >= 0 && tx < iwidth && ty < iheight) ? pixel/weight : (float4)0.0f;
+  pixel = (tx >= 0 && ty >= 0 && tx < iwidth && ty < iheight)
+          ? fmax(0.0f, pixel/weight)
+          : (float4)0.0f;
 
   write_imagef (out, (int2)(x, y), pixel);
 }
@@ -2589,7 +2612,9 @@ ashift_lanczos2(read_only image2d_t in,
     weight += w;
   }
 
-  pixel = (tx >= 0 && ty >= 0 && tx < iwidth && ty < iheight) ? pixel/weight : (float4)0.0f;
+  pixel = (tx >= 0 && ty >= 0 && tx < iwidth && ty < iheight)
+        ? fmax(0.0f, pixel/weight)
+        : (float4)0.0f;
 
   write_imagef (out, (int2)(x, y), pixel);
 }
@@ -2663,8 +2688,9 @@ ashift_lanczos3(read_only image2d_t in,
     weight += w;
   }
 
-  pixel = (tx >= 0 && ty >= 0
-           && tx < iwidth && ty < iheight) ? pixel/weight : (float4)0.0f;
+  pixel = (tx >= 0 && ty >= 0 && tx < iwidth && ty < iheight)
+          ? fmax(0.0f, pixel/weight)
+          : (float4)0.0f;
 
   write_imagef (out, (int2)(x, y), pixel);
 }
@@ -2964,7 +2990,7 @@ static inline float get_image_channel(read_only image2d_t in,
                                       const int y,
                                       const int c)
 {
-  float4 pixel = read_imagef(in, samplerA, (int2)(x, y));
+  float4 pixel = read_imagef(in, sampleri, (int2)(x, y));
   if(c == 0)
     return pixel.x;
   else if(c == 1)
@@ -3015,7 +3041,7 @@ float interpolation_compute_sample(read_only image2d_t in,
       }
       s += kernelv[i] * h;
     }
-    return s / (normh * normv);
+    return fmax(0.0f, s / (normh * normv));
   }
   return 0.0f;
 }

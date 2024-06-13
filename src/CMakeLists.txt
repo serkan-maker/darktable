@@ -198,6 +198,9 @@ if(WIN32)
   list(APPEND SOURCE_FILES "win/scandir.c")
   list(APPEND HEADER_FILES "win/scandir.h")
 
+  list(APPEND SOURCE_FILES "common/pwstorage/backend_windows_credentials.c")
+  list(APPEND HEADER_FILES "common/pwstorage/backend_windows_credentials.h")
+
   # Use mingw's sprintf instead of windows's
   ADD_DEFINITIONS( -D__USE_MINGW_ANSI_STDIO=1 )
 
@@ -432,15 +435,23 @@ include_directories(SYSTEM ${Sqlite3_INCLUDE_DIR})
 list(APPEND LIBS ${Sqlite3_LIBRARIES})
 add_definitions(${Sqlite3_DEFINITIONS})
 
-foreach(lib ${OUR_LIBS} GIO GThread GModule PangoCairo Rsvg2 LibXml2 CURL PNG JPEG TIFF LCMS2 JsonGlib)
+foreach(lib ${OUR_LIBS} GIO GThread GModule PangoCairo Rsvg2 LibXml2 PNG JPEG TIFF LCMS2 JsonGlib)
   find_package(${lib} REQUIRED)
   include_directories(SYSTEM ${${lib}_INCLUDE_DIRS})
   list(APPEND LIBS ${${lib}_LIBRARIES})
   add_definitions(${${lib}_DEFINITIONS})
 endforeach(lib)
 
-# Require exiv2 >= 0.25 to make sure everything we need is available
-find_package(Exiv2 0.25 REQUIRED)
+if(PNG_VERSION_STRING VERSION_LESS 1.5)
+  message(FATAL_ERROR "libpng version 1.5 or newer is required")
+endif()
+
+# Use imported target for curl
+find_package(CURL 7.56 REQUIRED)
+list(APPEND LIBS CURL::libcurl)
+
+# Require exiv2 >= 0.27.2 to make sure everything we need is available
+find_package(Exiv2 0.27.2 REQUIRED)
 include_directories(SYSTEM ${Exiv2_INCLUDE_DIRS})
 list(APPEND LIBS ${Exiv2_LIBRARIES})
 add_definitions(${Exiv2_DEFINITIONS})
@@ -475,13 +486,12 @@ if(USE_PORTMIDI)
 endif(USE_PORTMIDI)
 
 if(USE_OPENJPEG)
-  find_package(OpenJPEG)
+  find_package(OpenJPEG CONFIG)
   if(OpenJPEG_FOUND)
     add_definitions("-DHAVE_OPENJPEG")
     list(APPEND SOURCES "imageio/imageio_j2k.c")
-
-    include_directories(SYSTEM ${OpenJPEG_INCLUDE_DIRS})
-    list(APPEND LIBS ${OpenJPEG_LIBRARIES})
+    include_directories(SYSTEM ${OPENJPEG_INCLUDE_DIRS})
+    list(APPEND LIBS ${OPENJPEG_LIBRARIES})
     set(DT_SUPPORTED_EXTENSIONS ${DT_SUPPORTED_EXTENSIONS} j2c j2k jp2 jpc CACHE INTERNAL "")
   endif(OpenJPEG_FOUND)
 endif(USE_OPENJPEG)
@@ -522,6 +532,10 @@ endif(USE_KWALLET)
 if(APPLE)
   add_definitions("-DHAVE_APPLE_KEYCHAIN")
 endif(APPLE)
+
+if(WIN32)
+  add_definitions("-DHAVE_WINDOWS_CREDENTIALS")
+endif(WIN32)
 
 if(USE_MAC_INTEGRATION)
   find_package(MacIntegration)
@@ -626,18 +640,6 @@ if(NOT HAVE_TLS)
 endif()
 
 
-if(WIN32)
-  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--enable-runtime-pseudo-reloc -municode")
-  set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -Wl,--enable-runtime-pseudo-reloc")
-  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--enable-runtime-pseudo-reloc")
-
-  SET(CMAKE_SHARED_LIBRARY_LINK_C_FLAGS "-Wl,--no-undefined -static-libgcc -Wl,-O1 -Wl,--as-needed -Wl,--sort-common")
-  SET(CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS "-Wl,--no-undefined -static-libgcc -Wl,-O1 -Wl,--as-needed -Wl,--sort-common")
-
-  list(APPEND LIBS psapi) # Needed for GetProcessMemoryInfo()
-  list(APPEND LIBS exchndl) # Needed for exception handling and backtrace()
-endif(WIN32)
-
 if(NOT CUSTOM_CFLAGS)
   if(BUILD_SSE2_CODEPATHS)
     #we MUST always specify our required instruction set, native might not detect it
@@ -679,6 +681,18 @@ if(NOT CUSTOM_CFLAGS)
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O0")
   endif()
 endif(NOT CUSTOM_CFLAGS)
+
+if(WIN32)
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--enable-runtime-pseudo-reloc -municode")
+  set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -Wl,--enable-runtime-pseudo-reloc")
+  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--enable-runtime-pseudo-reloc")
+
+  SET(CMAKE_SHARED_LIBRARY_LINK_C_FLAGS "-Wl,--no-undefined -static-libgcc -Wl,-O1 -Wl,--as-needed -Wl,--sort-common")
+  SET(CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS "-Wl,--no-undefined -static-libgcc -Wl,-O1 -Wl,--as-needed -Wl,--sort-common")
+
+  list(APPEND LIBS psapi) # Needed for GetProcessMemoryInfo()
+  list(APPEND LIBS exchndl) # Needed for exception handling and backtrace()
+endif(WIN32)
 
 set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -D_DEBUG")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -D_DEBUG")
@@ -775,7 +789,7 @@ if(USE_LUA)
   list(APPEND STATIC_LIBS lautoc_static)
 endif(USE_LUA)
 
-find_package(Pugixml 1.2 REQUIRED)
+find_package(Pugixml 1.5 REQUIRED)
 include_directories(SYSTEM ${Pugixml_INCLUDE_DIRS})
 list(APPEND LIBS ${Pugixml_LIBRARIES})
 

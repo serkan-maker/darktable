@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    Copyright (C) 2013-2023 darktable developers.
+    Copyright (C) 2013-2024 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -111,12 +111,7 @@ void dt_masks_extend_border(float *const mask,
                             const int border)
 {
   if(border <= 0) return;
-#ifdef _OPENMP
-  #pragma omp parallel for default(none) \
-  dt_omp_firstprivate(mask) \
-  dt_omp_sharedconst(width, height, border) \
-  schedule(static)
- #endif
+  DT_OMP_FOR()
   for(size_t row = border; row < height - border; row++)
   {
     const size_t idx = row * width;
@@ -126,12 +121,7 @@ void dt_masks_extend_border(float *const mask,
       mask[idx + width - i - 1] = mask[idx + width - border -1];
     }
   }
-#ifdef _OPENMP
-  #pragma omp parallel for default(none) \
-  dt_omp_firstprivate(mask) \
-  dt_omp_sharedconst(width, height, border) \
-  schedule(static)
- #endif
+  DT_OMP_FOR()
   for(size_t col = 0; col < width; col++)
   {
     const float top = mask[border * width + MIN(width - border - 1, MAX(col, border))];
@@ -217,12 +207,7 @@ void dt_masks_blur(float *const restrict src,
   const size_t w2 = 2*width;
   const size_t w3 = 3*width;
   const size_t w4 = 4*width;
-#ifdef _OPENMP
-  #pragma omp parallel for simd default(none) \
-  dt_omp_firstprivate(blurmat, src, out, clip, gain) \
-  dt_omp_sharedconst(width, height, w1, w2, w3, w4) \
-  schedule(simd:static) aligned(src, out : 64)
- #endif
+  DT_OMP_FOR()
   for(size_t row = 4; row < height - 4; row++)
   {
     for(size_t col = 4; col < width - 4; col++)
@@ -246,39 +231,24 @@ gboolean dt_masks_calc_scharr_mask(dt_dev_detail_mask_t *details,
   float *tmp = dt_alloc_align_float(msize);
   if(!tmp) return TRUE;
 
-#ifdef _OPENMP
-  #pragma omp parallel for simd default(none) \
-  dt_omp_firstprivate(tmp, src, msize, wb) \
-  schedule(simd:static) aligned(tmp, src : 64)
-#endif
+  DT_OMP_FOR_SIMD(aligned(tmp, src : 64))
   for(size_t idx =0; idx < msize; idx++)
   {
-    const float val = CLIP(src[4 * idx] / wb[0])
-                    + CLIP(src[4 * idx + 1] / wb[1])
-                    + CLIP(src[4 * idx + 2] / wb[2]);
+    const float val = fmaxf(0.0f, src[4 * idx] / wb[0])
+                    + fmaxf(0.0f, src[4 * idx + 1] / wb[1])
+                    + fmaxf(0.0f, src[4 * idx + 2] / wb[2]);
     // add a gamma. sqrtf should make noise variance the same for all image
     tmp[idx] = sqrtf(val / 3.0f);
   }
 
-#ifdef _OPENMP
-  #pragma omp parallel for simd default(none) \
-  dt_omp_firstprivate(mask, tmp, width, height) \
-  schedule(simd:static) aligned(mask, tmp : 64)
- #endif
+  DT_OMP_FOR()
   for(size_t row = 1; row < height - 1; row++)
   {
     for(size_t col = 1; col < width - 1; col++)
     {
       const size_t idx = row * width + col;
-      // scharr operator
-      const float gx = 47.0f * (tmp[idx-width-1] - tmp[idx-width+1])
-                    + 162.0f * (tmp[idx-1]       - tmp[idx+1])
-                     + 47.0f * (tmp[idx+width-1] - tmp[idx+width+1]);
-      const float gy = 47.0f * (tmp[idx-width-1] - tmp[idx+width-1])
-                    + 162.0f * (tmp[idx-width]   - tmp[idx+width])
-                     + 47.0f * (tmp[idx-width+1] - tmp[idx+width+1]);
-      const float gradient_magnitude = sqrtf(sqrf(gx / 256.0f) + sqrf(gy / 256.0f));
-      mask[idx] = gradient_magnitude / 16.0f;
+      const float gradient_magnitude = scharr_gradient(&tmp[idx], width);
+      mask[idx] = fminf(1.0f, fmaxf(0.0f, gradient_magnitude / 16.0f));
     }
   }
   dt_masks_extend_border(mask, width, height, 1);
@@ -316,11 +286,7 @@ float *dt_masks_calc_detail_mask(struct dt_dev_pixelpipe_iop_t *piece,
 
   const float ithreshold = 16.0f / (fmaxf(1e-7, threshold));
   float *src = details->data;
-#ifdef _OPENMP
-  #pragma omp parallel for simd default(none) \
-  dt_omp_firstprivate(src, tmp, msize, ithreshold, detail) \
-  schedule(simd:static) aligned(src, tmp : 64)
-#endif
+  DT_OMP_FOR_SIMD(aligned(src, tmp : 64))
   for(size_t idx = 0; idx < msize; idx++)
   {
     const float blend = CLIP(_calcBlendFactor(src[idx], ithreshold));

@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    Copyright (C) 2013-2023 darktable developers.
+    Copyright (C) 2013-2024 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -875,16 +875,13 @@ static int _path_get_pts_border(dt_develop_t *dev,
 
       dx = pts[0] - (*points)[2];
       dy = pts[1] - (*points)[3];
+      float *const ptsbuf = DT_IS_ALIGNED(*points);
 
-#ifdef _OPENMP
-#pragma omp parallel for simd default(none) \
-    dt_omp_firstprivate(points_count, points, dx, dy) \
-    schedule(static) if(*points_count > 100) aligned(points:64)
-#endif
+      DT_OMP_FOR(if(*points_count > 100))
       for(int i = 0; i < *points_count; i++)
       {
-        (*points)[i * 2]     += dx;
-        (*points)[i * 2 + 1] += dy;
+        ptsbuf[i * 2]     += dx;
+        ptsbuf[i * 2 + 1] += dy;
       }
 
       // we apply the rest of the distortions (those after the module)
@@ -2688,11 +2685,7 @@ static int _path_get_mask(const dt_iop_module_t *const module,
            "[masks %s] path_fill draw path took %0.04f sec\n", form->name,
            dt_get_lap_time(&start2));
 
-#ifdef _OPENMP
-#pragma omp parallel for \
-  dt_omp_firstprivate(hb, wb, bufptr) \
-  schedule(static)
-#endif
+  DT_OMP_FOR()
   for(int yy = 0; yy < hb; yy++)
   {
     int state = 0;
@@ -3200,15 +3193,7 @@ static int _path_get_mask_roi(const dt_iop_module_t *const module,
       const int yymin = MAX(ymin, 0);
       const int yymax = MIN(ymax, height - 1);
 
-#ifdef _OPENMP
-#if !defined(__SUNOS__) && !defined(__NetBSD__)
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(xxmin, xxmax, yymin, yymax, width) \
-  shared(buffer) schedule(static) num_threads(MIN(8, dt_get_num_threads()))
-#else
-#pragma omp parallel for shared(buffer)
-#endif
-#endif
+      DT_OMP_FOR(num_threads(MIN(8, dt_get_num_threads())))
       for(int yy = yymin; yy <= yymax; yy++)
       {
         int state = 0;
@@ -3291,15 +3276,7 @@ static int _path_get_mask_roi(const dt_iop_module_t *const module,
       }
     }
 
-#ifdef _OPENMP
-#if !defined(__SUNOS__) && !defined(__NetBSD__)
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(width, height, dindex) \
-  shared(buffer, dpoints)
-#else
-#pragma omp parallel for shared(buffer)
-#endif
-#endif
+    DT_OMP_FOR()
     for(int n = 0; n < dindex; n += 4)
       _path_falloff_roi(buffer, dpoints + n, dpoints + n + 2, width, height);
 
@@ -3364,25 +3341,36 @@ static void _path_set_hint_message(const dt_masks_form_gui_t *const gui,
                                    const size_t msgbuf_len)
 {
   if(gui->creation && g_list_length(form->points) < 4)
-    g_strlcat(msgbuf, _("<b>add node</b>: click, <b>add sharp node</b>: ctrl+click\n"
-                        "<b>cancel</b>: right-click"), msgbuf_len);
+    g_strlcat(msgbuf,
+              _("<b>add node</b>: click, <b>add sharp node</b>: ctrl+click\n"
+                "<b>cancel</b>: right-click"),
+              msgbuf_len);
   else if(gui->creation)
-    g_strlcat(msgbuf, _("<b>add node</b>: click, <b>add sharp node</b>: ctrl+click\n"
-                        "<b>finish path</b>: right-click"), msgbuf_len);
+    g_strlcat(msgbuf,
+              _("<b>add node</b>: click, <b>add sharp node</b>: ctrl+click\n"
+                "<b>finish path</b>: right-click"),
+              msgbuf_len);
   else if(gui->point_selected >= 0)
-    g_strlcat(msgbuf, _("<b>move node</b>: drag, <b>remove node</b>: right-click\n"
-                        "<b>switch smooth/sharp mode</b>: ctrl+click"), msgbuf_len);
+    g_strlcat(msgbuf,
+              _("<b>move node</b>: drag, <b>remove node</b>: right-click\n"
+                "<b>switch smooth/sharp mode</b>: ctrl+click"),
+              msgbuf_len);
   else if(gui->feather_selected >= 0)
     g_strlcat(msgbuf,
-              _("<b>node curvature</b>: drag\n<b>reset curvature</b>: right-click"),
+              _("<b>node curvature</b>: drag\n"
+                "<b>reset curvature</b>: right-click"),
               msgbuf_len);
   else if(gui->seg_selected >= 0)
     g_strlcat(msgbuf,
-              _("<b>move segment</b>: drag\n<b>add node</b>: ctrl+click"), msgbuf_len);
+              _("<b>move segment</b>: drag, <b>add node</b>: ctrl+click\n"
+                "<b>remove path</b>: right-click"),
+              msgbuf_len);
   else if(gui->form_selected)
-    g_snprintf(msgbuf, msgbuf_len,
+    g_snprintf(msgbuf,
+               msgbuf_len,
                _("<b>size</b>: scroll, <b>feather size</b>: shift+scroll\n"
-                 "<b>opacity</b>: ctrl+scroll (%d%%)"), opacity);
+                 "<b>opacity</b>: ctrl+scroll (%d%%)"),
+               opacity);
 }
 
 static void _path_duplicate_points(dt_develop_t *const dev,

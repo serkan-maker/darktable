@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    Copyright (C) 2009-2023 darktable developers.
+    Copyright (C) 2009-2024 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -383,11 +383,7 @@ static void process_fastpath_apply_tonecurves(struct dt_iop_module_t *self,
     // do we have any lut to apply, or is this a linear profile?
     if((d->lut[0][0] >= 0.0f) && (d->lut[1][0] >= 0.0f) && (d->lut[2][0] >= 0.0f))
     { // apply profile
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-      dt_omp_firstprivate(d, out, npixels) \
-      schedule(static)
-#endif
+      DT_OMP_FOR()
       for(size_t k = 0; k < 4 * npixels; k += 4)
       {
         for(int c = 0; c < 3; c++)
@@ -399,11 +395,7 @@ static void process_fastpath_apply_tonecurves(struct dt_iop_module_t *self,
     }
     else if((d->lut[0][0] >= 0.0f) || (d->lut[1][0] >= 0.0f) || (d->lut[2][0] >= 0.0f))
     { // apply profile
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-      dt_omp_firstprivate(d, out, npixels) \
-      schedule(static)
-#endif
+      DT_OMP_FOR()
       for(size_t k = 0; k < 4 * npixels; k += 4)
       {
         for(int c = 0; c < 3; c++)
@@ -430,9 +422,7 @@ static void _transform_cmatrix_linear(const dt_iop_colorout_data_t *const d,
   copy_pixel(cmatrix_0,cmatrix[0]);
   copy_pixel(cmatrix_1,cmatrix[1]);
   copy_pixel(cmatrix_2,cmatrix[2]);
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(in, out, npixels, cmatrix_0, cmatrix_1, cmatrix_2, d)       \
-  schedule(simd:static)
+  DT_OMP_FOR()
   for(size_t k = 0; k < npixels; k++)
   {
     // oddly, calling dt_Lab_to_linearRGB instead of doing the
@@ -462,11 +452,7 @@ static void _transform_cmatrix_tonecurve(const dt_iop_colorout_data_t *const d,
   copy_pixel(cmatrix_2,cmatrix[2]);
   const float *const lut = &d->lut[0][0];
   const float *coeffs = &d->unbounded_coeffs[0][0];
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(in, out, npixels, cmatrix_0, cmatrix_1, cmatrix_2, lut, coeffs) \
-  schedule(simd:static)
-#endif
+  DT_OMP_FOR()
   for(size_t k = 0; k < npixels; k++)
   {
     dt_aligned_pixel_t rgb; // using an aligned temporary variable lets the compiler optimize away interm. writes
@@ -519,11 +505,7 @@ static void _transform_lcms(const dt_iop_colorout_data_t *const d,
   // rounded up to a multiple of the CPU's cache line size
   const size_t nthreads = dt_get_num_threads();
   const size_t chunksize = dt_cacheline_chunks(npixels, nthreads);
-#ifdef _OPENMP
-#pragma omp parallel for default(none)                                  \
-    dt_omp_firstprivate(in, out, npixels, chunksize, d, gamutcheck) \
-    schedule(static)
-#endif
+  DT_OMP_FOR()
   for(size_t chunkstart = 0; chunkstart < npixels; chunkstart += chunksize)
   {
     size_t count = MIN(chunkstart + chunksize, npixels) - chunkstart;
@@ -573,25 +555,6 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
   }
 }
 
-static cmsHPROFILE _make_clipping_profile(cmsHPROFILE profile)
-{
-  cmsUInt32Number size;
-  cmsHPROFILE old_profile = profile;
-  profile = NULL;
-
-  if(old_profile && cmsSaveProfileToMem(old_profile, NULL, &size))
-  {
-    char *data = malloc(size);
-
-    if(cmsSaveProfileToMem(old_profile, data, &size))
-      profile = cmsOpenProfileFromMem(data, size);
-
-    free(data);
-  }
-
-  return profile;
-}
-
 void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *p1, dt_dev_pixelpipe_t *pipe,
                    dt_dev_pixelpipe_iop_t *piece)
 {
@@ -600,7 +563,7 @@ void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *p1, dt_dev_pix
 
   d->type = p->type;
 
-  const int force_lcms2 = dt_conf_get_bool("plugins/lighttable/export/force_lcms2");
+  const gboolean force_lcms2 = dt_conf_get_bool("plugins/lighttable/export/force_lcms2");
 
   dt_colorspaces_color_profile_type_t out_type = DT_COLORSPACE_SRGB;
   gchar *out_filename = NULL;
@@ -724,7 +687,7 @@ void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *p1, dt_dev_pix
     // taking a roundtrip through those profiles during softproofing has no effect. as a workaround we have to
     // make lcms quantisize those gamma tables to get the desired effect.
     // in case that fails we don't enable softproofing.
-    softproof = _make_clipping_profile(softproof);
+    softproof = dt_colorspaces_make_temporary_profile(softproof);
     if(softproof)
     {
       /* TODO: the use of bpc should be userconfigurable either from module or preference pane */
@@ -798,7 +761,7 @@ void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *p1, dt_dev_pix
       d->unbounded_coeffs[k][0] = -1.0f;
   }
 
-  // softproof is never the original but always a copy that went through _make_clipping_profile()
+  // softproof is never the original but always a copy that went through dt_colorspaces_make_temporary_profile()
   dt_colorspaces_cleanup_profile(softproof);
 
   dt_ioppr_set_pipe_output_profile_info(self->dev, piece->pipe, d->type, out_filename, p->intent);
@@ -861,7 +824,7 @@ static void _preference_changed(gpointer instance, gpointer user_data)
   dt_iop_module_t *self = (dt_iop_module_t *)user_data;
   dt_iop_colorout_gui_data_t *g = (dt_iop_colorout_gui_data_t *)self->gui_data;
 
-  const int force_lcms2 = dt_conf_get_bool("plugins/lighttable/export/force_lcms2");
+  const gboolean force_lcms2 = dt_conf_get_bool("plugins/lighttable/export/force_lcms2");
   if(force_lcms2)
   {
     gtk_widget_set_no_show_all(g->output_intent, FALSE);
@@ -876,7 +839,7 @@ static void _preference_changed(gpointer instance, gpointer user_data)
 
 void gui_init(struct dt_iop_module_t *self)
 {
-  const int force_lcms2 = dt_conf_get_bool("plugins/lighttable/export/force_lcms2");
+  const gboolean force_lcms2 = dt_conf_get_bool("plugins/lighttable/export/force_lcms2");
 
   dt_iop_colorout_gui_data_t *g = IOP_GUI_ALLOC(colorout);
 

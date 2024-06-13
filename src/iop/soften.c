@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    Copyright (C) 2011-2021 darktable developers.
+    Copyright (C) 2011-2024 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -123,12 +123,7 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
 
   const size_t npixels = (size_t)roi_out->width * roi_out->height;
 /* create overexpose image and then blur */
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(brightness, npixels, saturation) \
-  dt_omp_sharedconst(in, out) \
-  schedule(static)
-#endif
+  DT_OMP_FOR()
   for(size_t k = 0; k < 4 * npixels; k += 4)
   {
     float h, s, l;
@@ -229,13 +224,9 @@ int process_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, cl_m
   dev_m = dt_opencl_copy_host_to_device_constant(devid, mat_size, mat);
   if(dev_m == NULL) goto error;
 
-  /* overexpose image */
-  sizes[0] = ROUNDUPDWD(width, devid);
-  sizes[1] = ROUNDUPDHT(height, devid);
-  sizes[2] = 1;
-  dt_opencl_set_kernel_args(devid, gd->kernel_soften_overexposed, 0, CLARG(dev_in), CLARG(dev_tmp),
+  err = dt_opencl_enqueue_kernel_2d_args(devid, gd->kernel_soften_overexposed, width, height,
+    CLARG(dev_in), CLARG(dev_tmp),
     CLARG(width), CLARG(height), CLARG(saturation), CLARG(brightness));
-  err = dt_opencl_enqueue_kernel_2d(devid, gd->kernel_soften_overexposed, sizes);
   if(err != CL_SUCCESS) goto error;
 
   if(rad != 0)
@@ -266,13 +257,9 @@ int process_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, cl_m
     if(err != CL_SUCCESS) goto error;
   }
 
-  /* mixing tmp and in -> out */
-  sizes[0] = ROUNDUPDWD(width, devid);
-  sizes[1] = ROUNDUPDHT(height, devid);
-  sizes[2] = 1;
-  dt_opencl_set_kernel_args(devid, gd->kernel_soften_mix, 0, CLARG(dev_in), CLARG(dev_tmp), CLARG(dev_out),
+  err = dt_opencl_enqueue_kernel_2d_args(devid, gd->kernel_soften_mix, width, height,
+    CLARG(dev_in), CLARG(dev_tmp), CLARG(dev_out),
     CLARG(width), CLARG(height), CLARG(amount));
-  err = dt_opencl_enqueue_kernel_2d(devid, gd->kernel_soften_mix, sizes);
 
 error:
   dt_opencl_release_mem_object(dev_m);
